@@ -22,6 +22,7 @@ from typing import Any
 
 HOST = "127.0.0.1"
 PORT = 8787
+MAX_BODY_BYTES = 8192
 
 PALETTE = {
     "mint": (0.45, 1.0, 0.78),
@@ -76,6 +77,7 @@ class RobotController:
         if not self._imports:
             raise RuntimeError("Ozobot SDK is unavailable")
 
+        handle = None
         try:
             handle = self._imports["SyncEvoHandle"](name=self.robot_name)
             robot = handle.__enter__()
@@ -84,6 +86,11 @@ class RobotController:
             self.connected = True
             return self.status()
         except Exception as exc:
+            if handle is not None:
+                try:
+                    handle.__exit__(type(exc), exc, exc.__traceback__)
+                except Exception:
+                    pass
             self.connected = False
             self.robot = None
             self._ctx = None
@@ -166,7 +173,7 @@ class RobotController:
         else:
             sample = self.robot.data.surface_color.read()
             value = getattr(sample, "value", sample)
-            self.surface = str(value)
+            self.surface = str(getattr(value, "name", value))
         return {"ok": True, "action": "read_color", "surface": self.surface}
 
     def hello(self) -> dict[str, Any]:
@@ -206,7 +213,7 @@ class RobotController:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "OzoPetBridge/0.1"
+    server_version = "OzoPetBridge/0.2"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stdout.write("[bridge] " + (fmt % args) + "\n")
@@ -235,17 +242,29 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The browser can abandon a request if BLE discovery takes longer than its UI timeout.
+            pass
 
     def _authorized(self) -> bool:
         return secrets.compare_digest(self.headers.get("X-OzoPet-Key", ""), self.bridge_key)
 
     def _read_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length > 8192:
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length") from exc
+        if length < 0:
+            raise ValueError("Invalid Content-Length")
+        if length > MAX_BODY_BYTES:
             raise ValueError("Request body too large")
         raw = self.rfile.read(length) if length else b"{}"
-        return json.loads(raw.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
@@ -281,6 +300,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 class BridgeServer(HTTPServer):
+    allow_reuse_address = True
+
     def __init__(self, address: tuple[str, int], controller: RobotController, bridge_key: str):
         super().__init__(address, BridgeHandler)
         self.controller = controller
@@ -293,6 +314,9 @@ def main() -> int:
     parser.add_argument("--name", default=os.environ.get("OZOBOT_NAME", "OzoEvo-*"), help="Evo BLE name filter")
     parser.add_argument("--port", type=int, default=PORT)
     args = parser.parse_args()
+
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
 
     key = os.environ.get("OZOPET_BRIDGE_KEY") or secrets.token_hex(12)
     controller = RobotController(simulate=args.sim, robot_name=args.name)
