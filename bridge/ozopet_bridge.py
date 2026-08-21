@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import secrets
 import sys
@@ -23,6 +24,10 @@ from typing import Any
 HOST = "127.0.0.1"
 PORT = 8787
 MAX_BODY_BYTES = 8192
+
+
+def _reject_constant(name: str) -> float:
+    raise ValueError(f"non-finite JSON constant not allowed: {name}")
 
 PALETTE = {
     "mint": (0.45, 1.0, 0.78),
@@ -36,6 +41,16 @@ PALETTE = {
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def require_finite(value: Any, name: str) -> float:
+    """Validate a JSON-supplied motor parameter: must be a finite number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"'{name}' must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"'{name}' must be a finite number")
+    return number
 
 
 class RobotController:
@@ -128,8 +143,8 @@ class RobotController:
 
     def move(self, distance: float, speed: float) -> dict[str, Any]:
         self._require()
-        distance = clamp(float(distance), -120, 120)
-        speed = clamp(abs(float(speed)), 20, 80)
+        distance = clamp(require_finite(distance, "distance"), -120, 120)
+        speed = clamp(abs(require_finite(speed, "speed")), 20, 80)
         if self.simulate:
             time.sleep(min(abs(distance) / max(speed, 1), 0.35))
         else:
@@ -138,8 +153,8 @@ class RobotController:
 
     def turn(self, angle: float, speed: float) -> dict[str, Any]:
         self._require()
-        angle = clamp(float(angle), -180, 180)
-        speed = clamp(abs(float(speed)), 30, 120)
+        angle = clamp(require_finite(angle, "angle"), -180, 180)
+        speed = clamp(abs(require_finite(speed, "speed")), 30, 120)
         if self.simulate:
             time.sleep(min(abs(angle) / max(speed, 1), 0.35))
         else:
@@ -158,8 +173,8 @@ class RobotController:
 
     def tone(self, frequency: float, duration: float) -> dict[str, Any]:
         self._require()
-        frequency = clamp(float(frequency), 180, 1600)
-        duration = clamp(float(duration), 0.03, 0.35)
+        frequency = clamp(require_finite(frequency, "frequency"), 180, 1600)
+        duration = clamp(require_finite(duration, "duration"), 0.03, 0.35)
         if not self.simulate:
             self.robot.play_tone(int(frequency), duration)
         else:
@@ -249,7 +264,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             pass
 
     def _authorized(self) -> bool:
-        return secrets.compare_digest(self.headers.get("X-OzoPet-Key", ""), self.bridge_key)
+        supplied = self.headers.get("X-OzoPet-Key", "")
+        try:
+            # Byte comparison: str mode rejects non-ASCII input with TypeError.
+            return secrets.compare_digest(supplied.encode("utf-8"), self.bridge_key.encode("utf-8"))
+        except (TypeError, ValueError, UnicodeEncodeError):
+            return False
 
     def _read_body(self) -> dict[str, Any]:
         try:
@@ -261,7 +281,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if length > MAX_BODY_BYTES:
             raise ValueError("Request body too large")
         raw = self.rfile.read(length) if length else b"{}"
-        payload = json.loads(raw.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
         if not isinstance(payload, dict):
             raise ValueError("JSON body must be an object")
         return payload
@@ -312,7 +332,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="OzoPet local Evo bridge")
     parser.add_argument("--sim", action="store_true", help="Run without hardware for bridge/UI testing")
     parser.add_argument("--name", default=os.environ.get("OZOBOT_NAME", "OzoEvo-*"), help="Evo BLE name filter")
-    parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--port", type=int, default=PORT,
+                        help="Local port (the web UI always calls the default 8787; override only for testing)")
     args = parser.parse_args()
 
     if not 1 <= args.port <= 65535:

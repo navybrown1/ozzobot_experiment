@@ -4,6 +4,9 @@
   const STORAGE_KEY = 'ozopet-state-v1';
   const MOTOR_ACTIONS = new Set(['move', 'turn', 'dance']);
   const ALLOWED_ZONES = new Set(['nest', 'food', 'play', 'mystery', 'center']);
+  const TOP_LEVEL_KEYS = new Set(['version', 'name', 'day', 'awake', 'living', 'mood', 'zone', 'vitals', 'dna', 'memories', 'dreams', 'hardware', 'interactionCount']);
+  const VITAL_DEFAULTS = { energy: 84, curiosity: 91, social: 63, confidence: 72, mischief: 82, boredom: 26, trust: 68 };
+  const DNA_DEFAULTS = { curiosity: 91, courage: 57, affection: 74, independence: 79, mischief: 88, patience: 31, obedience: 49, persistence: 84, weirdness: 93 };
   const MOTOR_INTENTS = [
     '[data-hw="forward"]',
     '[data-hw="back"]',
@@ -41,6 +44,11 @@
       const state = readStoredState();
       if (!state || typeof state !== 'object' || state.version !== 1) return;
 
+      // Drop anything unknown before it can reach a renderer.
+      for (const key of Object.keys(state)) {
+        if (!TOP_LEVEL_KEYS.has(key)) delete state[key];
+      }
+
       state.name = safeText(state.name, 'Ozi', 32) || 'Ozi';
       state.mood = safeText(state.mood, 'curious', 32) || 'curious';
       state.day = Math.max(1, Math.floor(clampNumber(state.day, 1, 1, 999999)));
@@ -69,11 +77,17 @@
       state.vitals = state.vitals && typeof state.vitals === 'object' && !Array.isArray(state.vitals) ? state.vitals : {};
       state.dna = state.dna && typeof state.dna === 'object' && !Array.isArray(state.dna) ? state.dna : {};
 
-      for (const key of ['energy', 'curiosity', 'social', 'confidence', 'mischief', 'boredom', 'trust']) {
-        state.vitals[key] = clampNumber(state.vitals[key], 50);
+      for (const key of Object.keys(state.vitals)) {
+        if (!(key in VITAL_DEFAULTS)) delete state.vitals[key];
       }
-      for (const key of ['curiosity', 'courage', 'affection', 'independence', 'mischief', 'patience', 'obedience', 'persistence', 'weirdness']) {
-        state.dna[key] = clampNumber(state.dna[key], 50);
+      for (const key of Object.keys(state.dna)) {
+        if (!(key in DNA_DEFAULTS)) delete state.dna[key];
+      }
+      for (const key of Object.keys(VITAL_DEFAULTS)) {
+        state.vitals[key] = clampNumber(state.vitals[key], VITAL_DEFAULTS[key]);
+      }
+      for (const key of Object.keys(DNA_DEFAULTS)) {
+        state.dna[key] = clampNumber(state.dna[key], DNA_DEFAULTS[key]);
       }
 
       // Bridge keys are short-lived localhost secrets. Never restore one after a page load.

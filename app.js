@@ -101,10 +101,28 @@
     try {
       const saved = JSON.parse(localStorage.getItem(memoryKey));
       if (!saved || saved.version !== 1) return structuredClone(DEFAULT_STATE);
-      return { ...structuredClone(DEFAULT_STATE), ...saved, vitals: { ...DEFAULT_STATE.vitals, ...(saved.vitals || {}) }, dna: { ...DEFAULT_STATE.dna, ...(saved.dna || {}) }, hardware: { ...DEFAULT_STATE.hardware, ...(saved.hardware || {}), connected: false } };
+      const base = structuredClone(DEFAULT_STATE);
+      return {
+        ...base,
+        ...saved,
+        vitals: { ...base.vitals, ...(saved.vitals || {}) },
+        dna: { ...base.dna, ...(saved.dna || {}) },
+        memories: sanitizeList(saved.memories, m => m && typeof m === 'object' && typeof m.text === 'string', 80, m => ({ text: safeSlice(m.text, 600), at: safeSlice(m.at, 80, 'unknown time') }), base.memories),
+        dreams: sanitizeList(saved.dreams, d => d && typeof d === 'object' && typeof d.text === 'string' && typeof d.title === 'string', 40, d => ({ title: safeSlice(d.title, 100, 'Untitled Dream'), text: safeSlice(d.text, 1200), day: Number.isFinite(d.day) ? Math.max(0, Math.floor(d.day)) : 0 }), base.dreams),
+        hardware: { ...base.hardware, ...(saved.hardware || {}), connected: false }
+      };
     } catch {
       return structuredClone(DEFAULT_STATE);
     }
+  }
+
+  function safeSlice(value, max, fallback = '') {
+    return (typeof value === 'string' ? value : fallback).slice(0, max);
+  }
+
+  function sanitizeList(value, isValid, cap, normalize, fallback) {
+    if (!Array.isArray(value)) return fallback;
+    return value.filter(isValid).slice(-cap).map(normalize);
   }
 
   function saveState() {
@@ -131,7 +149,9 @@
     $('#bodyReadout').textContent = state.hardware.connected ? 'real Evo' : 'simulation';
     $('#hardwareLabel').textContent = state.hardware.connected ? 'evo body attached' : 'simulated body';
     $('#hardwareDot').classList.toggle('connected', state.hardware.connected);
-    $('#footerStatus').textContent = state.hardware.connected ? 'hardware bridge connected // safe command mode' : 'simulation awake // no hardware commands sent';
+    $('#footerStatus').textContent = state.hardware.connected
+      ? (state.awake ? 'hardware bridge connected // safe command mode' : 'hardware bridge connected // motors idle')
+      : (state.awake ? 'simulation awake // no hardware commands sent' : 'simulation asleep // no hardware commands sent');
     renderMeters();
     renderMemories();
     renderTags();
@@ -168,9 +188,14 @@
     const explain = {
       curiosity:'pull toward novelty', courage:'approach unknown things', affection:'seek friendly contact', independence:'act without asking', mischief:'prefer interesting mistakes', patience:'wait before acting', obedience:'follow direct requests', persistence:'try again after failure', weirdness:'choose delightfully odd options'
     };
-    $('#dnaGrid').innerHTML = Object.entries(state.dna).map(([k,v]) => `
-      <div class="dna-item"><div class="dna-item-head"><span>${k}</span><strong>${v}</strong></div><div class="meter-track"><div class="meter-fill" style="width:${v}%"></div></div><p>${explain[k]}</p></div>`).join('');
-    $('#traitCombo').innerHTML = `<b>${archetype().toUpperCase()}</b><br>${traitSentence()}`;
+    $('#dnaGrid').innerHTML = Object.entries(state.dna)
+      .filter(([k]) => Object.prototype.hasOwnProperty.call(explain, k) && Number.isFinite(Number(state.dna[k])))
+      .map(([k, v]) => {
+        const shown = clamp(Math.round(Number(v)));
+        return `<div class="dna-item"><div class="dna-item-head"><span>${escapeHTML(k)}</span><strong>${shown}</strong></div><div class="meter-track"><div class="meter-fill" style="width:${shown}%"></div></div><p>${explain[k]}</p></div>`;
+      })
+      .join('');
+    $('#traitCombo').innerHTML = `<b>${escapeHTML(archetype().toUpperCase())}</b><br>${escapeHTML(traitSentence())}`;
   }
 
   function renderDreams() {
@@ -222,12 +247,21 @@
     return 'Ozi is still deciding what kind of human you are.';
   }
 
+  let weatherCache = { key: null, value: '' };
   function habitatWeather() {
-    if (!state.awake) return 'dreaming quietly';
-    if (state.vitals.boredom > 70) return 'dangerously bored';
-    if (state.vitals.mischief > 88) return 'bad idea pressure';
-    if (state.vitals.energy < 30) return 'sleepy static';
-    return pick(['softly curious','mossy and alert','mildly suspicious','pleasantly weird']);
+    const key = !state.awake
+      ? 'asleep'
+      : `awake:${state.vitals.boredom > 70}:${state.vitals.mischief > 88}:${state.vitals.energy < 30}`;
+    if (weatherCache.key !== key) {
+      const options = !state.awake
+        ? ['dreaming quietly']
+        : state.vitals.boredom > 70 ? ['dangerously bored']
+        : state.vitals.mischief > 88 ? ['bad idea pressure']
+        : state.vitals.energy < 30 ? ['sleepy static']
+        : ['softly curious','mossy and alert','mildly suspicious','pleasantly weird'];
+      weatherCache = { key, value: pick(options) };
+    }
+    return weatherCache.value;
   }
 
   function mindThought() {
@@ -258,6 +292,7 @@
     if (state.memories.length > 80) state.memories = state.memories.slice(-80);
   }
 
+  let popTimer = null;
   function speak(text, mood = null) {
     $('#ambientText').textContent = text;
     $('#mindText').textContent = text;
@@ -265,7 +300,8 @@
     const pop = $('#thoughtPop');
     pop.textContent = pick(['?','!','✦','…','♥']);
     pop.classList.add('show');
-    setTimeout(() => pop.classList.remove('show'), 1100);
+    clearTimeout(popTimer);
+    popTimer = setTimeout(() => pop.classList.remove('show'), 1100);
   }
 
   function setLed(color) {
@@ -274,12 +310,14 @@
     $('#habitatMoodDot').style.boxShadow = `0 0 10px ${color}`;
   }
 
+  const animTimers = {};
   function animate(cls, duration = 900) {
     const el = $('#ozi');
+    clearTimeout(animTimers[cls]);
     el.classList.remove('bop','spin','nervous');
     void el.offsetWidth;
     el.classList.add(cls);
-    setTimeout(() => el.classList.remove(cls), duration);
+    animTimers[cls] = setTimeout(() => el.classList.remove(cls), duration);
   }
 
   function moveTo(zoneName, hardware = false) {
@@ -434,10 +472,13 @@
     } finally { clearTimeout(timeout); }
   }
 
+  let connectingBridge = false;
   async function connectBridge() {
+    if (connectingBridge) return;
     const key = $('#bridgeKey').value.trim();
     if (!key) return toast('Bridge key missing','Run bridge/ozopet_bridge.py and paste the key it prints.');
     state.hardware.key = key;
+    connectingBridge = true;
     try {
       const health = await hardwareRequest('/health');
       if (!health.ok) throw new Error('bridge health check failed');
@@ -453,6 +494,8 @@
     } catch (err) {
       state.hardware.connected = false; renderAll();
       toast('Bridge did not connect', humanError(err));
+    } finally {
+      connectingBridge = false;
     }
   }
 
@@ -467,6 +510,7 @@
   }
 
   function hardwareSoftFail(err) {
+    if (!state.hardware.connected) return;
     state.hardware.connected = false; saveState(); renderAll();
     toast('Hardware went quiet', humanError(err));
   }
@@ -482,18 +526,25 @@
     return err?.message || 'Unknown bridge error.';
   }
 
+  let lastFocused = null;
   function openModal(id) {
+    lastFocused = document.activeElement;
     $('#modalLayer').classList.add('open');
     $('#modalLayer').setAttribute('aria-hidden','false');
     $$('.modal').forEach(m => m.classList.toggle('active', m.id === id));
     document.body.style.overflow = 'hidden';
+    const modal = document.getElementById(id);
+    (modal?.querySelector('.modal-close') || modal)?.focus();
   }
 
   function closeModal() {
+    if (!$('#modalLayer').classList.contains('open')) return;
     $('#modalLayer').classList.remove('open');
     $('#modalLayer').setAttribute('aria-hidden','true');
     $$('.modal').forEach(m => m.classList.remove('active'));
     document.body.style.overflow = '';
+    if (lastFocused && document.contains(lastFocused) && typeof lastFocused.focus === 'function') lastFocused.focus();
+    lastFocused = null;
   }
 
   function toast(title, text) {
@@ -534,6 +585,11 @@
   function bindEvents() {
     $$('[data-action]').forEach(btn => btn.addEventListener('click', () => perform(btn.dataset.action)));
     $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
+      if (!state.awake) {
+        speak('I am asleep. The map can wait until morning.', 'sleepy');
+        toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
+        return;
+      }
       const z = btn.dataset.zone;
       moveTo(z, true); modify('curiosity', -2); modify('boredom', -5); speak(`You pointed at ${zoneLabel(z)}. I am choosing to interpret this as permission.`, 'curious'); addMemory(`Was directed toward ${zoneLabel(z)}.`); saveState(); renderAll();
     }));
@@ -557,8 +613,18 @@
       catch(e){ hardwareSoftFail(e); }
     });
     $('#generateDream').addEventListener('click', generateDream);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeModal(); return; }
+      if (e.key !== 'Tab' || !$('#modalLayer').classList.contains('open')) return;
+      const focusables = $$('.modal.active button, .modal.active input').filter(el => el.offsetParent !== null);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
     window.addEventListener('beforeunload', saveState);
+    window.addEventListener('pagehide', saveState);
   }
 
   function getColor(name) {
