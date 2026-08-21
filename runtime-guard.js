@@ -4,8 +4,18 @@
   const STORAGE_KEY = 'ozopet-state-v1';
   const MOTOR_ACTIONS = new Set(['move', 'turn', 'dance']);
   const ALLOWED_ZONES = new Set(['nest', 'food', 'play', 'mystery', 'center']);
-  const GESTURE_WINDOW_MS = 1500;
-  let lastTrustedGestureAt = 0;
+  const MOTOR_INTENTS = [
+    '[data-hw="forward"]',
+    '[data-hw="back"]',
+    '[data-hw="left"]',
+    '[data-hw="right"]',
+    '[data-action="explore"]',
+    '[data-action="dance"]',
+    '[data-action="mischief"]'
+  ].join(',');
+  const GESTURE_WINDOW_MS = 900;
+  let motorPermitUntil = 0;
+  let eraseArmedUntil = 0;
 
   function clampNumber(value, fallback, min = 0, max = 100) {
     const n = Number(value);
@@ -42,23 +52,28 @@
         state.dna[key] = clampNumber(state.dna[key], 50);
       }
 
-      // The bridge key is a short-lived local secret. Never carry it between browser sessions.
+      // Bridge keys are short-lived localhost secrets. Never restore one after a page load.
       state.hardware = state.hardware && typeof state.hardware === 'object' ? state.hardware : {};
       state.hardware.connected = false;
       state.hardware.key = '';
 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // The main app already has a no-state fallback. Do not make startup depend on storage.
+      // The main app already has a safe default-state fallback.
     }
   }
 
-  function noteTrustedGesture(event) {
-    if (event.isTrusted) lastTrustedGestureAt = Date.now();
+  function armMotorIntent(event) {
+    if (!event.isTrusted) return;
+    const target = event.target?.closest?.(MOTOR_INTENTS);
+    if (!target) return;
+    motorPermitUntil = Date.now() + GESTURE_WINDOW_MS;
   }
 
-  function hasFreshTrustedGesture() {
-    return Date.now() - lastTrustedGestureAt <= GESTURE_WINDOW_MS;
+  function consumeMotorPermit() {
+    if (Date.now() > motorPermitUntil) return false;
+    motorPermitUntil = 0;
+    return true;
   }
 
   function installMotorSafetyGuard() {
@@ -71,19 +86,19 @@
       if (isBridgeAction && String(init.method || 'GET').toUpperCase() === 'POST') {
         try {
           const payload = typeof init.body === 'string' ? JSON.parse(init.body) : null;
-          if (payload && MOTOR_ACTIONS.has(payload.action) && !hasFreshTrustedGesture()) {
+          if (payload && MOTOR_ACTIONS.has(payload.action) && !consumeMotorPermit()) {
             return new Response(JSON.stringify({
               ok: true,
               action: payload.action,
               blocked: true,
-              reason: 'autonomous physical motion requires a fresh user gesture'
+              reason: 'physical motion requires an explicit user control gesture'
             }), {
               status: 200,
               headers: { 'Content-Type': 'application/json' }
             });
           }
         } catch {
-          // If a request cannot be inspected, let the bridge validate it normally.
+          // Let the localhost bridge perform its own validation when inspection is impossible.
         }
       }
 
@@ -110,6 +125,32 @@
     }, true);
   }
 
+  function installMemoryEraseGuard() {
+    const button = document.querySelector('#clearMemories');
+    if (!button) return;
+    const original = button.textContent || 'ERASE';
+
+    button.addEventListener('click', event => {
+      const now = Date.now();
+      if (now <= eraseArmedUntil) {
+        eraseArmedUntil = 0;
+        button.textContent = original;
+        return;
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      eraseArmedUntil = now + 3000;
+      button.textContent = 'CONFIRM?';
+      setTimeout(() => {
+        if (Date.now() > eraseArmedUntil) {
+          eraseArmedUntil = 0;
+          button.textContent = original;
+        }
+      }, 3100);
+    }, true);
+  }
+
   function installMindstreamSync() {
     const ambient = document.querySelector('#ambientText');
     const mind = document.querySelector('#mindText');
@@ -128,18 +169,40 @@
     });
   }
 
+  function installFooterSync() {
+    const footer = document.querySelector('#footerStatus');
+    if (!footer) return;
+
+    const sync = () => {
+      const state = readStoredState();
+      if (state?.awake === false && footer.textContent?.startsWith('simulation awake')) {
+        footer.textContent = 'simulation asleep // no hardware commands sent';
+      }
+    };
+
+    new MutationObserver(sync).observe(footer, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+    queueMicrotask(sync);
+  }
+
   sanitizeStoredState();
-  document.addEventListener('pointerdown', noteTrustedGesture, true);
-  document.addEventListener('keydown', noteTrustedGesture, true);
+  document.addEventListener('pointerdown', armMotorIntent, true);
+  document.addEventListener('keydown', armMotorIntent, true);
   installMotorSafetyGuard();
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      installSleepingZoneGuard();
-      installMindstreamSync();
-    }, { once: true });
-  } else {
+  const installDomGuards = () => {
     installSleepingZoneGuard();
+    installMemoryEraseGuard();
     installMindstreamSync();
+    installFooterSync();
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installDomGuards, { once: true });
+  } else {
+    installDomGuards();
   }
 })();
