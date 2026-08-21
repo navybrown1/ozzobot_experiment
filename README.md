@@ -38,15 +38,38 @@ The bridge prints a one-time key. Open **Hardware Lab** in OzoPet, paste that ke
 
 ## Try the real Ozobot Evo
 
-The current `ozobot-evo` package requires Python 3.13+.
+The current `ozobot-evo` package requires Python 3.13+. On PyPI it only
+supports the Ozobot Editor web runtime ("Evo native driver is not yet
+implemented"), so `install.sh` installs the official packages from a pinned
+commit of [ozobot/python-libraries](https://github.com/ozobot/python-libraries),
+where native BLE via bleak is implemented.
+
+macOS / Linux:
+
+```bash
+cd bridge
+./install.sh          # creates .venv, installs pinned SDK + dependencies
+.venv/bin/python ozopet_bridge.py
+```
+
+Windows (PowerShell) — same script logic manually:
 
 ```powershell
 cd bridge
-py -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\activate
-py -m pip install -r requirements.txt
-py ozopet_bridge.py
+python -m pip install loguru "bleak~=2.0.0" "pydantic>=2.11.5" "ozobot-web>=0.3.0,<0.4.0"
+python -m pip install --no-deps `
+  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-common" `
+  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-ble" `
+  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-linefollower" `
+  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-evo"
+python ozopet_bridge.py
 ```
+
+On macOS the first BLE scan makes the system ask permission for Python to
+use Bluetooth — approve it once. Chrome may also ask for Local Network
+Access the first time the hosted app talks to the loopback bridge.
 
 The default BLE name filter is `OzoEvo-*`. Override it if necessary:
 
@@ -56,7 +79,10 @@ py ozopet_bridge.py --name "OzoEvo-ABC*"
 
 ### Important hardware status
 
-Ozobot's current Python documentation exposes Evo movement, rotation, LEDs, tones and sensor reads, but the `ozobot-evo` 0.3.2 package is still labeled **work in progress** and notes that its available runtime driver is web-oriented. Because of that, OzoPet treats native hardware connection as experimental until it is tested against the specific Evo and Windows environment.
+The bridge drives the Evo over native Bluetooth LE using Ozobot's official
+`ozobot` Python packages (bleak/CoreBluetooth transport). Verified working
+end-to-end on macOS (Apple Silicon, Python 3.13): LED, tone, surface-color
+read, small turns and short moves.
 
 The bridge is intentionally conservative:
 

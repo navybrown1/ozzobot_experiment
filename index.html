@@ -270,7 +270,7 @@
           <button class="wide-test" id="readColorButton">READ EVO SURFACE COLOR</button>
         </div>
       </div>
-      <div class="warning-note"><b>CURRENT DRIVER LIMITATION.</b> Ozobot's published <code>ozobot-evo 0.3.2</code> package documents the current API, but its package page still says the available runtime driver is web-oriented. The native Windows bridge is therefore experimental until it completes a real Evo connection on this machine.</div>
+      <div class="warning-note"><b>HOW IT CONNECTS.</b> The bridge uses Ozobot's official Python packages with native Bluetooth LE (bleak/CoreBluetooth). Keep the official Ozobot Editor closed while connected — it holds the same Bluetooth link. Movement stays clamped (±120 mm, ±180°) and requires a fresh click or key press.</div>
     </section>
 
     <section class="modal" id="dnaModal" aria-modal="true" role="dialog" aria-label="Personality DNA">

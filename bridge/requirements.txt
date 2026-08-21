@@ -1,1 +1,16 @@
-ozobot-evo==0.3.2
+# OzoPet bridge dependencies.
+#
+# The released ozobot-evo 0.3.2 on PyPI cannot drive a real Evo natively:
+# its native driver raises NotImplementedError and its ozobot-ble
+# dependency is not published on PyPI. The native (bleak/CoreBluetooth)
+# driver is available in the official Ozobot monorepo, so the Ozobot
+# packages are installed from a pinned commit by bridge/install.sh.
+#
+# Run:  ./install.sh
+#
+# Third-party dependencies of the Ozobot packages (installed by install.sh,
+# listed here for reference/CI):
+loguru
+bleak~=2.0.0
+pydantic>=2.11.5
+ozobot-web>=0.3.0,<0.4.0
