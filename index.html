@@ -216,10 +216,11 @@
         </section>
 
         <section class="doors-card">
-          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>03</b></div>
-          <button class="door-button" data-modal="dnaModal"><span><small>01</small> PERSONALITY DNA</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="dreamModal"><span><small>02</small> DREAM VAULT</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="hardwareModal"><span><small>03</small> HARDWARE LAB</span><b>OPEN</b></button>
+          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>04</b></div>
+          <button class="door-button" data-modal="howtoModal"><span><small>01</small> HOW TO PLAY</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="dnaModal"><span><small>02</small> PERSONALITY DNA</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="dreamModal"><span><small>03</small> DREAM VAULT</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="hardwareModal"><span><small>04</small> HARDWARE LAB</span><b>OPEN</b></button>
         </section>
       </aside>
     </main>
@@ -234,11 +235,34 @@
   <div class="modal-layer" id="modalLayer" aria-hidden="true">
     <div class="modal-scrim" data-close-modal></div>
 
+    <section class="modal" id="howtoModal" aria-modal="true" role="dialog" aria-label="How to Play">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">HOW TO PLAY // FIELD MANUAL</div>
+      <h2>WHO IS OZI, AND HOW DO I PRESS ITS BUTTONS?</h2>
+      <p class="modal-lead">OZI is a tiny desk creature — a curious trickster with real opinions. It lives in this page, remembers you, dreams about you, and (with a grown-up's help) can borrow a real Evo robot body.</p>
+      <div class="howto-grid">
+        <div class="howto-panel">
+          <div class="tiny-label" style="margin-top:0">NO ROBOT? START HERE</div>
+          <div class="howto-step"><span class="howto-num">1</span><div><b>JUST LOOK AT OZI</b><p>It is already awake. It watches the desk, thinks thoughts and mutters them in the MINDSTREAM.</p></div></div>
+          <div class="howto-step"><span class="howto-num">2</span><div><b>PRESS THE SIX BIG BUTTONS</b><p>SAY HELLO greets you. CRUNCHBYTE offers a snack tribute. EXPLORE follows curiosity. DANCE requests nonsense. TEMPT FATE is a bad influence. BEDTIME puts OZI to sleep.</p></div></div>
+          <div class="howto-step"><span class="howto-num">3</span><div><b>COME BACK TOMORROW</b><p>OZI notices when you are gone. Its mood drifts, new TINY MEMORIES appear, and the DREAM VAULT remixes your day into tiny stories.</p></div></div>
+        </div>
+        <div class="howto-panel">
+          <div class="tiny-label" style="margin-top:0">REAL ROBOT MODE (ASK A GROWN-UP)</div>
+          <div class="howto-step"><span class="howto-num">A</span><div><b>A GROWN-UP RUNS THE BRIDGE</b><p>One-time setup on the computer next to the robot. Instructions live in the README next to <code>bridge/install.sh</code>.</p></div></div>
+          <div class="howto-step"><span class="howto-num">B</span><div><b>PASTE THE BRIDGE KEY</b><p>Open HARDWARE LAB, paste the one-time key the bridge shows, then press CONNECT. The real Evo lights up when linked.</p></div></div>
+          <div class="howto-step"><span class="howto-num">C</span><div><b>USE THE SAFE BODY TEST</b><p>Arrows drive it a little. The dot beeps. Swatches change its light. READ SURFACE COLOR asks what the floor is made of.</p></div></div>
+        </div>
+      </div>
+      <div class="howto-kid"><b>SAFETY RULES.</b> The browser stays the brain: Living Mode can never steer the real robot by itself — every move needs a fresh button click. Moves are size-clamped so OZI never zooms off the desk. Keep the official Ozobot Editor closed while connected; they fight over the same Bluetooth link.</div>
+      <a class="modal-secondary howto-print" href="./docs/how-to-play-printable.html" target="_blank" rel="noopener">PRINTABLE ONE-PAGE GUIDE</a>
+    </section>
+
     <section class="modal" id="hardwareModal" aria-modal="true" role="dialog" aria-label="Hardware Lab">
       <button class="modal-close" data-close-modal>×</button>
       <div class="modal-kicker">HARDWARE LAB // EXPERIMENTAL</div>
       <h2>GIVE OZI THE REAL BODY.</h2>
-      <p class="modal-lead">The browser remains the brain. A local bridge on your Windows PC handles the physical Evo and keeps every movement command safety-clamped. Physical motor commands require a fresh click or key press, so Living Mode cannot make the real robot wander on its own.</p>
+      <p class="modal-lead">The browser remains the brain. A local bridge on your computer handles the physical Evo and keeps every movement command safety-clamped. Physical motor commands require a fresh click or key press, so Living Mode cannot make the real robot wander on its own.</p>
       <div class="hardware-grid">
         <div class="connection-panel">
           <div class="connection-orb" id="connectionOrb"><span></span></div>

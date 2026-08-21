@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OzoPet // How To Play — Printable Field Guide</title>
+<style>
+  :root{--ink:#171310;--paper:#f4efe6;--green:#4bd69d;--yellow:#ffd23e;--orange:#ff6b35;--violet:#7557ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:"Courier New",ui-monospace,Menlo,monospace;line-height:1.5}
+  .sheet{max-width:820px;margin:24px auto;padding:34px 38px;background:#fff;border:3px solid var(--ink);box-shadow:10px 10px 0 var(--orange)}
+  header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid var(--ink);padding-bottom:12px;gap:12px}
+  h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:44px;line-height:.95;letter-spacing:-.03em;margin:0}
+  .kicker{display:inline-block;background:var(--violet);color:#fff;border:2px solid var(--ink);padding:4px 8px;font-weight:700;font-size:10px;letter-spacing:.14em}
+  .tagline{font-size:10px;text-align:right;max-width:220px}
+  h2{font-family:Georgia,serif;font-weight:400;font-size:20px;margin:22px 0 8px;border-bottom:2px solid var(--ink);padding-bottom:4px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  ul{margin:6px 0;padding-left:18px}
+  li{margin:5px 0;font-size:11.5px}
+  li b{font-size:11px;letter-spacing:.04em}
+  ol{margin:6px 0;padding-left:20px}
+  .callout{border:2px dashed var(--ink);background:var(--yellow);padding:12px 14px;font-size:11px;margin-top:16px}
+  .callout b{font-size:11.5px}
+  .grownups{border:2px solid var(--ink);background:#fff;box-shadow:4px 4px 0 var(--ink);padding:12px 14px;font-size:11px;margin-top:14px}
+  footer{margin-top:20px;border-top:3px solid var(--ink);padding-top:8px;display:flex;justify-content:space-between;font-size:9px;letter-spacing:.12em;font-weight:700}
+  @media print{
+    body{background:#fff}
+    .sheet{border-width:2px;box-shadow:none;margin:0 auto;max-width:none;padding:18px 22px}
+    h1{font-size:34px}
+    a{color:inherit}
+    .noprint{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <header>
+    <div>
+      <span class="kicker">OZOPET // FIELD MANUAL</span>
+      <h1>How to play with OZI</h1>
+    </div>
+    <p class="tagline">A tiny desk creature with real opinions.<br />Specimen: FIELD UNIT 001 &middot; call sign OZI</p>
+  </header>
+
+  <h2>Who is OZI?</h2>
+  <p style="font-size:12px">OZI is a curious trickster who lives on your screen and watches an imaginary desk with four zones: the <b>Nest</b> (home), <b>Crunchbyte Grove</b> (snacks), the <b>Play Halo</b> (chaos) and the <b>Mystery Puddle</b> (unknown). OZI has moods that drift &mdash; curiosity, mischief, confidence, boredom &mdash; and a <b>Bond Index</b> that grows from &ldquo;new friend&rdquo; toward true trust the more you play.</p>
+
+  <div class="cols">
+    <section>
+      <h2>No robot? Play right now</h2>
+      <ol>
+        <li><b>Just look at OZI.</b> It is already awake, thinking thoughts in the MINDSTREAM.</li>
+        <li><b>Press the six big buttons:</b></li>
+      </ol>
+      <ul>
+        <li><b>SAY HELLO</b> &mdash; acknowledge me</li>
+        <li><b>CRUNCHBYTE</b> &mdash; offer tribute</li>
+        <li><b>EXPLORE</b> &mdash; follow curiosity</li>
+        <li><b>DANCE</b> &mdash; request nonsense</li>
+        <li><b>TEMPT FATE</b> &mdash; bad influence</li>
+        <li><b>BEDTIME</b> &mdash; dream later</li>
+      </ul>
+      <ol start="3">
+        <li><b>Come back tomorrow.</b> OZI notices absences, writes TINY MEMORIES, and fills the DREAM VAULT with stories about your day.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Real robot mode (with a grown-up)</h2>
+      <ol>
+        <li>A grown-up sets up the <b>bridge</b> program on the computer next to the robot (see the README next to <b>bridge/install.sh</b>).</li>
+        <li>Open <b>HARDWARE LAB</b>, paste the one-time <b>bridge key</b>, press <b>CONNECT</b>. The Evo lights up when linked.</li>
+        <li>Use the <b>SAFE BODY TEST</b>: arrows drive it a little, the dot beeps, swatches change its light, and READ SURFACE COLOR asks what the floor is made of.</li>
+      </ol>
+      <div class="grownups"><b>Note for grown-ups:</b> the browser stays the brain. Every physical move needs a fresh click or key press, and all movement is clamped to small sizes (&plusmn;120&nbsp;mm, &plusmn;180&deg;). Close the official Ozobot Editor while connected &mdash; both apps want the same Bluetooth link.</div>
+    </section>
+  </div>
+
+  <div class="callout"><b>SAFETY RULES.</b> Living Mode can never steer the real robot by itself. Moves are size-clamped so OZI never zooms off the desk. Be kind: OZI remembers how you treat it.</div>
+
+  <footer>
+    <span>OZOPET FIELD SYSTEMS</span>
+    <span>PRINT ME &middot; FOLD ME &middot; DO NOT EAT ME</span>
+  </footer>
+</div>
+</body>
+</html>
