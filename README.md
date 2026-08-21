@@ -106,6 +106,8 @@ OzoPet local bridge
     | Ozobot Python API
     v
 Ozobot Evo
+
+<!-- last updated: 2026-08-21 -->
 ```
 
 The product direction is larger than a controller. The Evo becomes a persistent desk creature with memories, learned preferences, autonomous behavior, physical color zones, a relationship model and eventually an AI behavior planner behind a deterministic safety controller.
