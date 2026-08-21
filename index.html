@@ -26,7 +26,7 @@
         </div>
         <div class="brand-copy">
           <div class="brand">OZO<span>PET</span></div>
-          <div class="brand-sub">A LIVING DESK CREATURE / EVO BODY READY</div>
+          <div class="brand-sub">A LIVING DESK CREATURE / EVO BODY LAB</div>
         </div>
       </div>
 
@@ -237,7 +237,7 @@
       <button class="modal-close" data-close-modal>×</button>
       <div class="modal-kicker">HARDWARE LAB // EXPERIMENTAL</div>
       <h2>GIVE OZI THE REAL BODY.</h2>
-      <p class="modal-lead">The browser remains the brain. A local bridge on your Windows PC handles the physical Evo and keeps every movement command safety-clamped.</p>
+      <p class="modal-lead">The browser remains the brain. A local bridge on your Windows PC handles the physical Evo and keeps every movement command safety-clamped. Physical motor commands require a fresh click or key press, so Living Mode cannot make the real robot wander on its own.</p>
       <div class="hardware-grid">
         <div class="connection-panel">
           <div class="connection-orb" id="connectionOrb"><span></span></div>
@@ -249,7 +249,7 @@
             <button class="modal-primary" id="connectBridge">CONNECT TO LOCAL BRIDGE</button>
             <button class="modal-secondary" id="disconnectBridge">DISCONNECT</button>
           </div>
-          <div class="micro-copy">Fixed endpoint: <code>http://127.0.0.1:8787</code>. Commands are safety-clamped by the local bridge.</div>
+          <div class="micro-copy">Fixed endpoint: <code>http://127.0.0.1:8787</code>. Chrome may ask for Local Network Access the first time the hosted app talks to the bridge.</div>
         </div>
         <div class="control-panel">
           <div class="tiny-label">SAFE BODY TEST</div>
@@ -269,7 +269,7 @@
           <button class="wide-test" id="readColorButton">READ EVO SURFACE COLOR</button>
         </div>
       </div>
-      <div class="warning-note"><b>WHY A BRIDGE?</b> The current official Evo Python package is still experimental. OzoPet isolates hardware access from the creature simulation so the pet remains usable even if the BLE layer misbehaves.</div>
+      <div class="warning-note"><b>CURRENT DRIVER LIMITATION.</b> Ozobot's published <code>ozobot-evo 0.3.2</code> package documents the current API, but its package page still says the available runtime driver is web-oriented. The native Windows bridge is therefore experimental until it completes a real Evo connection on this machine.</div>
     </section>
 
     <section class="modal" id="dnaModal" aria-modal="true" role="dialog" aria-label="Personality DNA">
@@ -293,6 +293,7 @@
   </div>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <script src="./runtime-guard.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
