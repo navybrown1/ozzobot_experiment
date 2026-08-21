@@ -22,6 +22,11 @@
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
   }
 
+  function safeText(value, fallback = '', max = 500) {
+    const text = typeof value === 'string' ? value : fallback;
+    return text.slice(0, max);
+  }
+
   function readStoredState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -36,14 +41,33 @@
       const state = readStoredState();
       if (!state || typeof state !== 'object' || state.version !== 1) return;
 
+      state.name = safeText(state.name, 'Ozi', 32) || 'Ozi';
+      state.mood = safeText(state.mood, 'curious', 32) || 'curious';
       state.day = Math.max(1, Math.floor(clampNumber(state.day, 1, 1, 999999)));
+      state.interactionCount = Math.floor(clampNumber(state.interactionCount, 0, 0, 1_000_000_000));
       state.awake = typeof state.awake === 'boolean' ? state.awake : true;
       state.living = typeof state.living === 'boolean' ? state.living : true;
       state.zone = ALLOWED_ZONES.has(state.zone) ? state.zone : 'nest';
-      state.memories = Array.isArray(state.memories) ? state.memories.slice(-80) : [];
-      state.dreams = Array.isArray(state.dreams) ? state.dreams.slice(-40) : [];
-      state.vitals = state.vitals && typeof state.vitals === 'object' ? state.vitals : {};
-      state.dna = state.dna && typeof state.dna === 'object' ? state.dna : {};
+
+      state.memories = (Array.isArray(state.memories) ? state.memories : [])
+        .slice(-80)
+        .filter(item => item && typeof item === 'object')
+        .map(item => ({
+          text: safeText(item.text, 'A fuzzy memory.', 600),
+          at: safeText(item.at, 'unknown time', 80)
+        }));
+
+      state.dreams = (Array.isArray(state.dreams) ? state.dreams : [])
+        .slice(-40)
+        .filter(item => item && typeof item === 'object')
+        .map(item => ({
+          title: safeText(item.title, 'Untitled Dream', 100),
+          text: safeText(item.text, 'The details faded before morning.', 1200),
+          day: Math.max(0, Math.floor(clampNumber(item.day, 0, 0, 999999)))
+        }));
+
+      state.vitals = state.vitals && typeof state.vitals === 'object' && !Array.isArray(state.vitals) ? state.vitals : {};
+      state.dna = state.dna && typeof state.dna === 'object' && !Array.isArray(state.dna) ? state.dna : {};
 
       for (const key of ['energy', 'curiosity', 'social', 'confidence', 'mischief', 'boredom', 'trust']) {
         state.vitals[key] = clampNumber(state.vitals[key], 50);
@@ -53,7 +77,7 @@
       }
 
       // Bridge keys are short-lived localhost secrets. Never restore one after a page load.
-      state.hardware = state.hardware && typeof state.hardware === 'object' ? state.hardware : {};
+      state.hardware = state.hardware && typeof state.hardware === 'object' && !Array.isArray(state.hardware) ? state.hardware : {};
       state.hardware.connected = false;
       state.hardware.key = '';
 
