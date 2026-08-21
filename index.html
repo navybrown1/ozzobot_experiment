@@ -3,171 +3,230 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#07100f" />
+  <meta name="theme-color" content="#efe8d7" />
   <meta name="description" content="OzoPet turns an Ozobot Evo into a persistent little desk creature." />
-  <title>OzoPet // Living Desk Creature</title>
+  <title>OzoPet // Field Unit 001</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div class="grain"></div>
+  <div class="page-noise" aria-hidden="true"></div>
+  <div class="paper-fold fold-a" aria-hidden="true"></div>
+  <div class="paper-fold fold-b" aria-hidden="true"></div>
+
   <div class="app-shell">
-    <header class="topbar">
+    <header class="masthead">
+      <div class="issue-tab">FIELD UNIT 001</div>
       <div class="brand-lockup" aria-label="OzoPet">
-        <div class="brand-orb"><span></span></div>
-        <div>
+        <div class="brand-mark" aria-hidden="true">
+          <span class="brand-dot"></span>
+          <span class="brand-ring"></span>
+        </div>
+        <div class="brand-copy">
           <div class="brand">OZO<span>PET</span></div>
-          <div class="brand-sub">living desk creature // evo edition</div>
+          <div class="brand-sub">A LIVING DESK CREATURE / EVO BODY READY</div>
         </div>
       </div>
-      <div class="top-status">
-        <button class="ghost-chip" id="livingToggle" title="Toggle autonomous behavior">
+
+      <div class="mast-actions">
+        <button class="switch-chip" id="livingToggle" title="Toggle autonomous behavior">
           <span class="pulse-dot"></span><span id="livingLabel">living mode</span>
         </button>
-        <button class="ghost-chip" id="hardwareButton" title="Connect a local Ozobot bridge">
+        <button class="switch-chip" id="hardwareButton" title="Connect a local Ozobot bridge">
           <span class="hardware-dot" id="hardwareDot"></span><span id="hardwareLabel">simulated body</span>
         </button>
-        <button class="day-chip" id="resetDayButton" title="Start a new day in the simulation">
-          DAY <strong id="dayCount">001</strong>
+        <button class="day-ticket" id="resetDayButton" title="Start a new day in the simulation">
+          <span>DAY</span><strong id="dayCount">001</strong>
         </button>
       </div>
     </header>
 
-    <main class="main-grid">
-      <aside class="left-rail">
-        <section class="rail-card identity-card">
-          <div class="tiny-label">CREATURE RECORD</div>
+    <main class="layout">
+      <aside class="specimen-column">
+        <section class="specimen-card punch-card">
+          <div class="section-stamp">SPECIMEN</div>
+          <div class="portrait-window">
+            <div class="portrait-bot">
+              <span class="portrait-eye"></span>
+              <span class="portrait-eye"></span>
+              <span class="portrait-led"></span>
+            </div>
+            <div class="portrait-bars" aria-hidden="true"></div>
+          </div>
           <div class="identity-row">
-            <div class="mini-orb"><span></span></div>
             <div>
+              <div class="micro-label">CALL SIGN</div>
               <h1 id="petName">OZI</h1>
-              <p id="archetype">curious trickster</p>
+            </div>
+            <div class="identity-note">
+              <span id="archetype">curious trickster</span>
+              <small id="dnaTag">DNA // A7-C9-41</small>
             </div>
           </div>
-          <div class="dna-tag" id="dnaTag">DNA // A7-C9-41</div>
         </section>
 
-        <section class="rail-card vitals-card">
-          <div class="section-heading">
-            <span>inner weather</span>
-            <span id="moodWord" class="mood-word">curious</span>
+        <section class="status-board">
+          <div class="board-title">
+            <span>INNER WEATHER</span>
+            <b id="moodWord">curious</b>
           </div>
-          <div class="meter-list" id="meterList"></div>
+          <div class="meter-list" id="meterList">
+            <div class="meter-row"><label>energy</label><div class="meter-track"><div class="meter-fill" style="width:84%"></div></div><output>84</output></div>
+            <div class="meter-row"><label>curiosity</label><div class="meter-track"><div class="meter-fill" style="width:91%"></div></div><output>91</output></div>
+            <div class="meter-row"><label>social</label><div class="meter-track"><div class="meter-fill" style="width:63%"></div></div><output>63</output></div>
+            <div class="meter-row"><label>confidence</label><div class="meter-track"><div class="meter-fill" style="width:72%"></div></div><output>72</output></div>
+            <div class="meter-row"><label>mischief</label><div class="meter-track"><div class="meter-fill" style="width:82%"></div></div><output>82</output></div>
+            <div class="meter-row"><label>boredom</label><div class="meter-track"><div class="meter-fill" style="width:26%"></div></div><output>26</output></div>
+          </div>
         </section>
 
-        <section class="rail-card relationship-card">
-          <div class="section-heading"><span>bond</span><span id="bondLabel">new friend</span></div>
-          <div class="bond-ring" id="bondRing">
-            <div class="bond-ring-inner"><strong id="trustScore">68</strong><span>trust</span></div>
+        <section class="bond-card">
+          <div class="bond-head">
+            <span>BOND INDEX</span>
+            <b id="bondLabel">new friend</b>
           </div>
-          <p id="relationshipThought">Ozi is still deciding what kind of human you are.</p>
+          <div class="bond-layout">
+            <div class="bond-ring" id="bondRing" style="--bond:68%">
+              <div class="bond-ring-inner"><strong id="trustScore">68</strong><span>trust</span></div>
+            </div>
+            <p id="relationshipThought">Ozi is still deciding what kind of human you are.</p>
+          </div>
         </section>
       </aside>
 
-      <section class="habitat-panel">
-        <div class="habitat-head">
+      <section class="world-column">
+        <div class="habitat-titlebar">
           <div>
-            <div class="eyebrow">DESK HABITAT // LIVE</div>
-            <h2 id="habitatTitle">The Moss Circuit</h2>
+            <div class="eyebrow">DESK MAP / LIVE FEED</div>
+            <h2 id="habitatTitle">THE MOSS CIRCUIT</h2>
           </div>
-          <div class="weather-pill"><span id="habitatMoodDot"></span><span id="habitatWeather">softly curious</span></div>
+          <div class="weather-tag"><span id="habitatMoodDot"></span><span id="habitatWeather">softly curious</span></div>
         </div>
 
-        <div class="habitat" id="habitat">
-          <div class="aurora aurora-a"></div>
-          <div class="aurora aurora-b"></div>
-          <div class="grid-floor"></div>
-          <div class="dust" id="dust"></div>
+        <div class="habitat-frame">
+          <div class="frame-label left-label">HABITAT 04-A</div>
+          <div class="frame-label right-label">DO NOT FOLD</div>
 
-          <button class="zone zone-food" data-zone="food" aria-label="Crunchbyte grove">
-            <span class="zone-icon">✦</span>
-            <span class="zone-name">CRUNCHBYTE GROVE</span>
-            <span class="zone-note">green means snack</span>
-          </button>
-          <button class="zone zone-play" data-zone="play" aria-label="Play halo">
-            <span class="zone-icon">◎</span>
-            <span class="zone-name">PLAY HALO</span>
-            <span class="zone-note">yellow means chaos</span>
-          </button>
-          <button class="zone zone-mystery" data-zone="mystery" aria-label="Mystery puddle">
-            <span class="zone-icon">◌</span>
-            <span class="zone-name">MYSTERY PUDDLE</span>
-            <span class="zone-note">purple means unknown</span>
-          </button>
-          <button class="zone zone-nest" data-zone="nest" aria-label="Nest">
-            <span class="zone-icon">⌁</span>
-            <span class="zone-name">NEST</span>
-            <span class="zone-note">blue means home</span>
-          </button>
+          <div class="habitat" id="habitat">
+            <div class="map-grid" aria-hidden="true"></div>
+            <div class="topographic topo-a" aria-hidden="true"></div>
+            <div class="topographic topo-b" aria-hidden="true"></div>
+            <div class="dust" id="dust"></div>
 
-          <div class="trail" id="trail"></div>
-          <div class="pet-shadow" id="petShadow"></div>
-          <div class="ozi" id="ozi" role="img" aria-label="Ozi, your virtual Ozobot pet">
-            <div class="ozi-glow"></div>
-            <div class="ozi-shell">
-              <div class="ozi-face">
-                <i></i><i></i><i></i><i></i><i></i>
+            <button class="zone zone-food" data-zone="food" aria-label="Crunchbyte grove">
+              <span class="zone-code">A1</span>
+              <span class="zone-glyph">✹</span>
+              <span class="zone-name">CRUNCHBYTE<br>GROVE</span>
+              <span class="zone-note">green / snack</span>
+            </button>
+            <button class="zone zone-play" data-zone="play" aria-label="Play halo">
+              <span class="zone-code">B7</span>
+              <span class="zone-glyph">◎</span>
+              <span class="zone-name">PLAY<br>HALO</span>
+              <span class="zone-note">yellow / chaos</span>
+            </button>
+            <button class="zone zone-mystery" data-zone="mystery" aria-label="Mystery puddle">
+              <span class="zone-code">X?</span>
+              <span class="zone-glyph">◈</span>
+              <span class="zone-name">MYSTERY<br>PUDDLE</span>
+              <span class="zone-note">purple / unknown</span>
+            </button>
+            <button class="zone zone-nest" data-zone="nest" aria-label="Nest">
+              <span class="zone-code">H0</span>
+              <span class="zone-glyph">⌁</span>
+              <span class="zone-name">NEST</span>
+              <span class="zone-note">blue / home</span>
+            </button>
+
+            <div class="route route-one" aria-hidden="true"></div>
+            <div class="route route-two" aria-hidden="true"></div>
+            <div class="route route-three" aria-hidden="true"></div>
+            <div class="trail" id="trail"></div>
+            <div class="pet-shadow" id="petShadow"></div>
+
+            <div class="ozi" id="ozi" role="img" aria-label="Ozi, your virtual Ozobot pet">
+              <div class="ozi-antenna"></div>
+              <div class="ozi-shell">
+                <div class="shell-sheen"></div>
+                <div class="circuit circuit-a"></div>
+                <div class="circuit circuit-b"></div>
+                <div class="ozi-face"><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="ozi-core"></div>
+                <div class="ozi-eye ozi-eye-left"></div>
+                <div class="ozi-eye ozi-eye-right"></div>
+                <div class="ozi-badge">OZ</div>
               </div>
-              <div class="ozi-core"></div>
-              <div class="ozi-eye ozi-eye-left"></div>
-              <div class="ozi-eye ozi-eye-right"></div>
+              <div class="wheel wheel-left"></div>
+              <div class="wheel wheel-right"></div>
+              <div class="thought-pop" id="thoughtPop">?</div>
             </div>
-            <div class="wheel wheel-left"></div>
-            <div class="wheel wheel-right"></div>
-            <div class="thought-pop" id="thoughtPop">?</div>
-          </div>
 
-          <div class="ambient-message" id="ambientMessage">
-            <span class="speaker">OZI</span>
-            <p id="ambientText">I have reviewed the desk. It appears suspiciously large.</p>
-          </div>
+            <div class="ambient-message" id="ambientMessage">
+              <span class="speaker">OZI / LIVE TRANSCRIPT</span>
+              <p id="ambientText">I have reviewed the desk. It appears suspiciously large.</p>
+            </div>
 
-          <div class="habitat-readout">
-            <span><b>zone</b> <em id="zoneReadout">nest edge</em></span>
-            <span><b>surface</b> <em id="surfaceReadout">unknown</em></span>
-            <span><b>body</b> <em id="bodyReadout">simulation</em></span>
+            <div class="habitat-readout">
+              <span><b>ZONE</b><em id="zoneReadout">nest edge</em></span>
+              <span><b>SURFACE</b><em id="surfaceReadout">unknown</em></span>
+              <span><b>BODY</b><em id="bodyReadout">simulation</em></span>
+            </div>
           </div>
         </div>
 
-        <div class="interaction-dock">
-          <button class="action primary-action" data-action="hello"><span>◉</span><b>say hello</b><small>acknowledge me</small></button>
-          <button class="action" data-action="feed"><span>✦</span><b>crunchbyte</b><small>offer snack</small></button>
-          <button class="action" data-action="explore"><span>⌁</span><b>explore</b><small>follow curiosity</small></button>
-          <button class="action" data-action="dance"><span>⌘</span><b>dance</b><small>request nonsense</small></button>
-          <button class="action" data-action="mischief"><span>?</span><b>tempt fate</b><small>bad influence</small></button>
-          <button class="action" data-action="sleep"><span>☾</span><b>bedtime</b><small>dream later</small></button>
+        <div class="control-rack">
+          <div class="rack-label">INTERACTION BAY</div>
+          <button class="action action-hello" data-action="hello"><span>01</span><b>SAY HELLO</b><small>acknowledge me</small></button>
+          <button class="action action-feed" data-action="feed"><span>02</span><b>CRUNCHBYTE</b><small>offer tribute</small></button>
+          <button class="action action-explore" data-action="explore"><span>03</span><b>EXPLORE</b><small>follow curiosity</small></button>
+          <button class="action action-dance" data-action="dance"><span>04</span><b>DANCE</b><small>request nonsense</small></button>
+          <button class="action action-mischief" data-action="mischief"><span>05</span><b>TEMPT FATE</b><small>bad influence</small></button>
+          <button class="action action-sleep" data-action="sleep"><span>06</span><b>BEDTIME</b><small>dream later</small></button>
         </div>
       </section>
 
-      <aside class="right-rail">
-        <section class="rail-card mind-card">
-          <div class="section-heading"><span>mindstream</span><span class="live-mark">live</span></div>
-          <div class="mind-main">
+      <aside class="archive-column">
+        <section class="mind-receipt">
+          <div class="receipt-top">
+            <span>MINDSTREAM</span>
+            <span class="live-mark">REC ●</span>
+          </div>
+          <div class="receipt-body">
             <div class="quote-mark">“</div>
             <p id="mindText">You returned. I had not finished judging the keyboard.</p>
+            <div class="mind-tags" id="mindTags">
+              <span>curious</span><span>nest</span><span>occupied</span><span>bad ideas</span>
+            </div>
           </div>
-          <div class="mind-tags" id="mindTags"></div>
+          <div class="receipt-teeth" aria-hidden="true"></div>
         </section>
 
-        <section class="rail-card memory-card">
-          <div class="section-heading"><span>tiny memories</span><button class="text-button" id="clearMemories">clear</button></div>
-          <div class="memory-feed" id="memoryFeed"></div>
+        <section class="memory-tape">
+          <div class="tape-head">
+            <span>TINY MEMORIES</span>
+            <button class="text-button" id="clearMemories">ERASE</button>
+          </div>
+          <div class="memory-feed" id="memoryFeed">
+            <div class="memory-item"><div class="memory-index">02</div><div><p>Decided the north edge of the desk probably contains secrets.</p><time>a moment ago</time></div></div>
+            <div class="memory-item"><div class="memory-index">01</div><div><p>Woke up and immediately distrusted the keyboard.</p><time>first light</time></div></div>
+          </div>
         </section>
 
-        <section class="rail-card lab-card">
-          <div class="section-heading"><span>strange little doors</span><span>3</span></div>
-          <button class="door-button" data-modal="dnaModal"><span>PERSONALITY DNA</span><small>see what makes Ozi difficult</small><b>↗</b></button>
-          <button class="door-button" data-modal="dreamModal"><span>DREAM VAULT</span><small>inspect subconscious nonsense</small><b>↗</b></button>
-          <button class="door-button" data-modal="hardwareModal"><span>HARDWARE LAB</span><small>attach the real Evo body</small><b>↗</b></button>
+        <section class="doors-card">
+          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>03</b></div>
+          <button class="door-button" data-modal="dnaModal"><span><small>01</small> PERSONALITY DNA</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="dreamModal"><span><small>02</small> DREAM VAULT</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="hardwareModal"><span><small>03</small> HARDWARE LAB</span><b>OPEN</b></button>
         </section>
       </aside>
     </main>
 
-    <footer class="footer-line">
-      <span>OzoPet remembers locally in this browser.</span>
+    <footer class="footer-strip">
+      <span>LOCAL MEMORY ACTIVE</span>
       <span id="footerStatus">simulation awake // no hardware commands sent</span>
+      <span>OZOPET FIELD SYSTEMS</span>
     </footer>
   </div>
 
@@ -177,18 +236,18 @@
     <section class="modal" id="hardwareModal" aria-modal="true" role="dialog" aria-label="Hardware Lab">
       <button class="modal-close" data-close-modal>×</button>
       <div class="modal-kicker">HARDWARE LAB // EXPERIMENTAL</div>
-      <h2>Give Ozi the real body.</h2>
-      <p class="modal-lead">The Vercel app stays the brain and interface. A tiny local bridge on your Windows PC talks to the Evo using Ozobot's Python API. Until that bridge proves a connection, Ozi stays safely simulated.</p>
+      <h2>GIVE OZI THE REAL BODY.</h2>
+      <p class="modal-lead">The browser remains the brain. A local bridge on your Windows PC handles the physical Evo and keeps every movement command safety-clamped.</p>
       <div class="hardware-grid">
         <div class="connection-panel">
           <div class="connection-orb" id="connectionOrb"><span></span></div>
           <h3 id="connectionTitle">No body attached</h3>
           <p id="connectionDetail">Start the bridge, paste its one-time key, then connect.</p>
-          <label class="field-label" for="bridgeKey">bridge key</label>
+          <label class="field-label" for="bridgeKey">BRIDGE KEY</label>
           <input id="bridgeKey" class="bridge-input" placeholder="example: 8f21c0..." autocomplete="off" />
           <div class="button-row">
-            <button class="modal-primary" id="connectBridge">connect to local bridge</button>
-            <button class="modal-secondary" id="disconnectBridge">disconnect</button>
+            <button class="modal-primary" id="connectBridge">CONNECT TO LOCAL BRIDGE</button>
+            <button class="modal-secondary" id="disconnectBridge">DISCONNECT</button>
           </div>
           <div class="micro-copy">Fixed endpoint: <code>http://127.0.0.1:8787</code>. Commands are safety-clamped by the local bridge.</div>
         </div>
@@ -202,22 +261,22 @@
             <button data-hw="back">▼</button>
           </div>
           <div class="led-swatches">
-            <button data-led="mint" style="--swatch:#74ffc8" aria-label="mint LED"></button>
-            <button data-led="violet" style="--swatch:#b780ff" aria-label="violet LED"></button>
-            <button data-led="amber" style="--swatch:#ffd36c" aria-label="amber LED"></button>
-            <button data-led="red" style="--swatch:#ff667c" aria-label="red LED"></button>
+            <button data-led="mint" style="--swatch:#4bd69d" aria-label="mint LED"></button>
+            <button data-led="violet" style="--swatch:#7557ff" aria-label="violet LED"></button>
+            <button data-led="amber" style="--swatch:#f3b61f" aria-label="amber LED"></button>
+            <button data-led="red" style="--swatch:#ee4b2b" aria-label="red LED"></button>
           </div>
-          <button class="wide-test" id="readColorButton">read Evo surface color</button>
+          <button class="wide-test" id="readColorButton">READ EVO SURFACE COLOR</button>
         </div>
       </div>
-      <div class="warning-note"><b>Why a bridge?</b> The current official Evo Python package is still labeled work in progress. OzoPet therefore isolates experimental hardware access from the game UI and keeps a full simulation path.</div>
+      <div class="warning-note"><b>WHY A BRIDGE?</b> The current official Evo Python package is still experimental. OzoPet isolates hardware access from the creature simulation so the pet remains usable even if the BLE layer misbehaves.</div>
     </section>
 
     <section class="modal" id="dnaModal" aria-modal="true" role="dialog" aria-label="Personality DNA">
       <button class="modal-close" data-close-modal>×</button>
       <div class="modal-kicker">PERSONALITY DNA</div>
-      <h2 id="dnaTitle">A tiny machine with opinions.</h2>
-      <p class="modal-lead">These traits affect autonomous choices, reactions and generated thoughts. They drift slowly through experience instead of behaving like cosmetic stats.</p>
+      <h2 id="dnaTitle">A TINY MACHINE WITH OPINIONS.</h2>
+      <p class="modal-lead">These traits shape autonomous choices, reactions and generated thoughts. They drift through experience instead of behaving like decorative stats.</p>
       <div class="dna-grid" id="dnaGrid"></div>
       <div class="trait-combo" id="traitCombo"></div>
     </section>
@@ -225,16 +284,15 @@
     <section class="modal" id="dreamModal" aria-modal="true" role="dialog" aria-label="Dream Vault">
       <button class="modal-close" data-close-modal>×</button>
       <div class="modal-kicker">DREAM VAULT</div>
-      <h2>Things Ozi absolutely did not understand.</h2>
-      <p class="modal-lead">Dreams remix recent memories into tiny stories. They are saved with the pet, which means the nonsense slowly becomes personal.</p>
+      <h2>THINGS OZI ABSOLUTELY DID NOT UNDERSTAND.</h2>
+      <p class="modal-lead">Dreams remix recent memories into tiny stories and stay attached to the same creature over time.</p>
       <div class="dream-feature" id="dreamFeature"></div>
       <div class="dream-list" id="dreamList"></div>
-      <button class="modal-primary" id="generateDream">generate tonight's dream</button>
+      <button class="modal-primary" id="generateDream">GENERATE TONIGHT'S DREAM</button>
     </section>
   </div>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-
   <script src="./app.js"></script>
 </body>
 </html>
