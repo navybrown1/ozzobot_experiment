@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#07100f" />
+  <meta name="description" content="OzoPet turns an Ozobot Evo into a persistent little desk creature." />
+  <title>OzoPet // Living Desk Creature</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="grain"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup" aria-label="OzoPet">
+        <div class="brand-orb"><span></span></div>
+        <div>
+          <div class="brand">OZO<span>PET</span></div>
+          <div class="brand-sub">living desk creature // evo edition</div>
+        </div>
+      </div>
+      <div class="top-status">
+        <button class="ghost-chip" id="livingToggle" title="Toggle autonomous behavior">
+          <span class="pulse-dot"></span><span id="livingLabel">living mode</span>
+        </button>
+        <button class="ghost-chip" id="hardwareButton" title="Connect a local Ozobot bridge">
+          <span class="hardware-dot" id="hardwareDot"></span><span id="hardwareLabel">simulated body</span>
+        </button>
+        <button class="day-chip" id="resetDayButton" title="Start a new day in the simulation">
+          DAY <strong id="dayCount">001</strong>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <aside class="left-rail">
+        <section class="rail-card identity-card">
+          <div class="tiny-label">CREATURE RECORD</div>
+          <div class="identity-row">
+            <div class="mini-orb"><span></span></div>
+            <div>
+              <h1 id="petName">OZI</h1>
+              <p id="archetype">curious trickster</p>
+            </div>
+          </div>
+          <div class="dna-tag" id="dnaTag">DNA // A7-C9-41</div>
+        </section>
+
+        <section class="rail-card vitals-card">
+          <div class="section-heading">
+            <span>inner weather</span>
+            <span id="moodWord" class="mood-word">curious</span>
+          </div>
+          <div class="meter-list" id="meterList"></div>
+        </section>
+
+        <section class="rail-card relationship-card">
+          <div class="section-heading"><span>bond</span><span id="bondLabel">new friend</span></div>
+          <div class="bond-ring" id="bondRing">
+            <div class="bond-ring-inner"><strong id="trustScore">68</strong><span>trust</span></div>
+          </div>
+          <p id="relationshipThought">Ozi is still deciding what kind of human you are.</p>
+        </section>
+      </aside>
+
+      <section class="habitat-panel">
+        <div class="habitat-head">
+          <div>
+            <div class="eyebrow">DESK HABITAT // LIVE</div>
+            <h2 id="habitatTitle">The Moss Circuit</h2>
+          </div>
+          <div class="weather-pill"><span id="habitatMoodDot"></span><span id="habitatWeather">softly curious</span></div>
+        </div>
+
+        <div class="habitat" id="habitat">
+          <div class="aurora aurora-a"></div>
+          <div class="aurora aurora-b"></div>
+          <div class="grid-floor"></div>
+          <div class="dust" id="dust"></div>
+
+          <button class="zone zone-food" data-zone="food" aria-label="Crunchbyte grove">
+            <span class="zone-icon">✦</span>
+            <span class="zone-name">CRUNCHBYTE GROVE</span>
+            <span class="zone-note">green means snack</span>
+          </button>
+          <button class="zone zone-play" data-zone="play" aria-label="Play halo">
+            <span class="zone-icon">◎</span>
+            <span class="zone-name">PLAY HALO</span>
+            <span class="zone-note">yellow means chaos</span>
+          </button>
+          <button class="zone zone-mystery" data-zone="mystery" aria-label="Mystery puddle">
+            <span class="zone-icon">◌</span>
+            <span class="zone-name">MYSTERY PUDDLE</span>
+            <span class="zone-note">purple means unknown</span>
+          </button>
+          <button class="zone zone-nest" data-zone="nest" aria-label="Nest">
+            <span class="zone-icon">⌁</span>
+            <span class="zone-name">NEST</span>
+            <span class="zone-note">blue means home</span>
+          </button>
+
+          <div class="trail" id="trail"></div>
+          <div class="pet-shadow" id="petShadow"></div>
+          <div class="ozi" id="ozi" role="img" aria-label="Ozi, your virtual Ozobot pet">
+            <div class="ozi-glow"></div>
+            <div class="ozi-shell">
+              <div class="ozi-face">
+                <i></i><i></i><i></i><i></i><i></i>
+              </div>
+              <div class="ozi-core"></div>
+              <div class="ozi-eye ozi-eye-left"></div>
+              <div class="ozi-eye ozi-eye-right"></div>
+            </div>
+            <div class="wheel wheel-left"></div>
+            <div class="wheel wheel-right"></div>
+            <div class="thought-pop" id="thoughtPop">?</div>
+          </div>
+
+          <div class="ambient-message" id="ambientMessage">
+            <span class="speaker">OZI</span>
+            <p id="ambientText">I have reviewed the desk. It appears suspiciously large.</p>
+          </div>
+
+          <div class="habitat-readout">
+            <span><b>zone</b> <em id="zoneReadout">nest edge</em></span>
+            <span><b>surface</b> <em id="surfaceReadout">unknown</em></span>
+            <span><b>body</b> <em id="bodyReadout">simulation</em></span>
+          </div>
+        </div>
+
+        <div class="interaction-dock">
+          <button class="action primary-action" data-action="hello"><span>◉</span><b>say hello</b><small>acknowledge me</small></button>
+          <button class="action" data-action="feed"><span>✦</span><b>crunchbyte</b><small>offer snack</small></button>
+          <button class="action" data-action="explore"><span>⌁</span><b>explore</b><small>follow curiosity</small></button>
+          <button class="action" data-action="dance"><span>⌘</span><b>dance</b><small>request nonsense</small></button>
+          <button class="action" data-action="mischief"><span>?</span><b>tempt fate</b><small>bad influence</small></button>
+          <button class="action" data-action="sleep"><span>☾</span><b>bedtime</b><small>dream later</small></button>
+        </div>
+      </section>
+
+      <aside class="right-rail">
+        <section class="rail-card mind-card">
+          <div class="section-heading"><span>mindstream</span><span class="live-mark">live</span></div>
+          <div class="mind-main">
+            <div class="quote-mark">“</div>
+            <p id="mindText">You returned. I had not finished judging the keyboard.</p>
+          </div>
+          <div class="mind-tags" id="mindTags"></div>
+        </section>
+
+        <section class="rail-card memory-card">
+          <div class="section-heading"><span>tiny memories</span><button class="text-button" id="clearMemories">clear</button></div>
+          <div class="memory-feed" id="memoryFeed"></div>
+        </section>
+
+        <section class="rail-card lab-card">
+          <div class="section-heading"><span>strange little doors</span><span>3</span></div>
+          <button class="door-button" data-modal="dnaModal"><span>PERSONALITY DNA</span><small>see what makes Ozi difficult</small><b>↗</b></button>
+          <button class="door-button" data-modal="dreamModal"><span>DREAM VAULT</span><small>inspect subconscious nonsense</small><b>↗</b></button>
+          <button class="door-button" data-modal="hardwareModal"><span>HARDWARE LAB</span><small>attach the real Evo body</small><b>↗</b></button>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="footer-line">
+      <span>OzoPet remembers locally in this browser.</span>
+      <span id="footerStatus">simulation awake // no hardware commands sent</span>
+    </footer>
+  </div>
+
+  <div class="modal-layer" id="modalLayer" aria-hidden="true">
+    <div class="modal-scrim" data-close-modal></div>
+
+    <section class="modal" id="hardwareModal" aria-modal="true" role="dialog" aria-label="Hardware Lab">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">HARDWARE LAB // EXPERIMENTAL</div>
+      <h2>Give Ozi the real body.</h2>
+      <p class="modal-lead">The Vercel app stays the brain and interface. A tiny local bridge on your Windows PC talks to the Evo using Ozobot's Python API. Until that bridge proves a connection, Ozi stays safely simulated.</p>
+      <div class="hardware-grid">
+        <div class="connection-panel">
+          <div class="connection-orb" id="connectionOrb"><span></span></div>
+          <h3 id="connectionTitle">No body attached</h3>
+          <p id="connectionDetail">Start the bridge, paste its one-time key, then connect.</p>
+          <label class="field-label" for="bridgeKey">bridge key</label>
+          <input id="bridgeKey" class="bridge-input" placeholder="example: 8f21c0..." autocomplete="off" />
+          <div class="button-row">
+            <button class="modal-primary" id="connectBridge">connect to local bridge</button>
+            <button class="modal-secondary" id="disconnectBridge">disconnect</button>
+          </div>
+          <div class="micro-copy">Fixed endpoint: <code>http://127.0.0.1:8787</code>. Commands are safety-clamped by the local bridge.</div>
+        </div>
+        <div class="control-panel">
+          <div class="tiny-label">SAFE BODY TEST</div>
+          <div class="dpad">
+            <button data-hw="forward">▲</button>
+            <button data-hw="left">◀</button>
+            <button data-hw="tone">●</button>
+            <button data-hw="right">▶</button>
+            <button data-hw="back">▼</button>
+          </div>
+          <div class="led-swatches">
+            <button data-led="mint" style="--swatch:#74ffc8" aria-label="mint LED"></button>
+            <button data-led="violet" style="--swatch:#b780ff" aria-label="violet LED"></button>
+            <button data-led="amber" style="--swatch:#ffd36c" aria-label="amber LED"></button>
+            <button data-led="red" style="--swatch:#ff667c" aria-label="red LED"></button>
+          </div>
+          <button class="wide-test" id="readColorButton">read Evo surface color</button>
+        </div>
+      </div>
+      <div class="warning-note"><b>Why a bridge?</b> The current official Evo Python package is still labeled work in progress. OzoPet therefore isolates experimental hardware access from the game UI and keeps a full simulation path.</div>
+    </section>
+
+    <section class="modal" id="dnaModal" aria-modal="true" role="dialog" aria-label="Personality DNA">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">PERSONALITY DNA</div>
+      <h2 id="dnaTitle">A tiny machine with opinions.</h2>
+      <p class="modal-lead">These traits affect autonomous choices, reactions and generated thoughts. They drift slowly through experience instead of behaving like cosmetic stats.</p>
+      <div class="dna-grid" id="dnaGrid"></div>
+      <div class="trait-combo" id="traitCombo"></div>
+    </section>
+
+    <section class="modal" id="dreamModal" aria-modal="true" role="dialog" aria-label="Dream Vault">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">DREAM VAULT</div>
+      <h2>Things Ozi absolutely did not understand.</h2>
+      <p class="modal-lead">Dreams remix recent memories into tiny stories. They are saved with the pet, which means the nonsense slowly becomes personal.</p>
+      <div class="dream-feature" id="dreamFeature"></div>
+      <div class="dream-list" id="dreamList"></div>
+      <button class="modal-primary" id="generateDream">generate tonight's dream</button>
+    </section>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
