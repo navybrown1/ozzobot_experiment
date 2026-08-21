@@ -14,7 +14,7 @@
     '[data-action="mischief"]'
   ].join(',');
   const GESTURE_WINDOW_MS = 900;
-  let motorPermitUntil = 0;
+  let motorPermit = null;
   let eraseArmedUntil = 0;
 
   function clampNumber(value, fallback, min = 0, max = 100) {
@@ -87,17 +87,29 @@
     }
   }
 
+  function expectedMotorAction(target) {
+    const hw = target?.dataset?.hw;
+    const action = target?.dataset?.action;
+    if (hw === 'forward' || hw === 'back') return 'move';
+    if (hw === 'left' || hw === 'right') return 'turn';
+    if (action === 'explore') return 'move';
+    if (action === 'dance') return 'dance';
+    if (action === 'mischief') return 'turn';
+    return null;
+  }
+
   function armMotorIntent(event) {
     if (!event.isTrusted) return;
     const target = event.target?.closest?.(MOTOR_INTENTS);
-    if (!target) return;
-    motorPermitUntil = Date.now() + GESTURE_WINDOW_MS;
+    const action = expectedMotorAction(target);
+    if (!action) return;
+    motorPermit = { action, until: Date.now() + GESTURE_WINDOW_MS };
   }
 
-  function consumeMotorPermit() {
-    if (Date.now() > motorPermitUntil) return false;
-    motorPermitUntil = 0;
-    return true;
+  function consumeMotorPermit(action) {
+    const permit = motorPermit;
+    motorPermit = null;
+    return !!permit && permit.action === action && Date.now() <= permit.until;
   }
 
   function installMotorSafetyGuard() {
@@ -110,12 +122,12 @@
       if (isBridgeAction && String(init.method || 'GET').toUpperCase() === 'POST') {
         try {
           const payload = typeof init.body === 'string' ? JSON.parse(init.body) : null;
-          if (payload && MOTOR_ACTIONS.has(payload.action) && !consumeMotorPermit()) {
+          if (payload && MOTOR_ACTIONS.has(payload.action) && !consumeMotorPermit(payload.action)) {
             return new Response(JSON.stringify({
               ok: true,
               action: payload.action,
               blocked: true,
-              reason: 'physical motion requires an explicit user control gesture'
+              reason: 'physical motion requires the matching explicit user control gesture'
             }), {
               status: 200,
               headers: { 'Content-Type': 'application/json' }
@@ -212,7 +224,19 @@
     queueMicrotask(sync);
   }
 
+  function installVisualFixes() {
+    const style = document.createElement('style');
+    style.id = 'ozopet-runtime-visual-fixes';
+    style.textContent = `
+      .dust i{position:absolute;width:3px;height:3px;border-radius:50%;background:rgba(21,21,21,.28);animation:dust-drift var(--d,10s) ease-in-out infinite alternate}
+      @keyframes dust-drift{from{transform:translate3d(-3px,-5px,0);opacity:.18}50%{opacity:.55}to{transform:translate3d(7px,9px,0);opacity:.12}}
+      @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+    `;
+    document.head.appendChild(style);
+  }
+
   sanitizeStoredState();
+  installVisualFixes();
   document.addEventListener('pointerdown', armMotorIntent, true);
   document.addEventListener('keydown', armMotorIntent, true);
   installMotorSafetyGuard();
