@@ -1,0 +1,88 @@
+name: OzoPet CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: JavaScript syntax checks
+        run: |
+          node --check app.js
+          node --check runtime-guard.js
+
+      - name: Python syntax check
+        run: python -m py_compile bridge/ozopet_bridge.py
+
+      - name: Static HTML and config audit
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from html.parser import HTMLParser
+
+          class AuditParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.ids = []
+                  self.scripts = []
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  if 'id' in attrs:
+                      self.ids.append(attrs['id'])
+                  if tag == 'script' and attrs.get('src'):
+                      self.scripts.append(attrs['src'])
+
+          parser = AuditParser()
+          with open('index.html', encoding='utf-8') as f:
+              parser.feed(f.read())
+
+          duplicates = [name for name, count in Counter(parser.ids).items() if count > 1]
+          assert not duplicates, f'duplicate HTML ids: {duplicates}'
+
+          required = {
+              'livingToggle', 'hardwareButton', 'dayCount', 'petName', 'meterList',
+              'bondRing', 'trustScore', 'relationshipThought', 'habitatWeather',
+              'ozi', 'petShadow', 'trail', 'ambientText', 'mindText', 'mindTags',
+              'memoryFeed', 'modalLayer', 'hardwareModal', 'dnaModal', 'dreamModal',
+              'bridgeKey', 'connectBridge', 'disconnectBridge', 'readColorButton',
+              'dnaGrid', 'traitCombo', 'dreamFeature', 'dreamList', 'generateDream',
+              'toastStack'
+          }
+          missing = sorted(required - set(parser.ids))
+          assert not missing, f'missing HTML ids required by app.js: {missing}'
+          assert parser.scripts[-2:] == ['./runtime-guard.js', './app.js'], parser.scripts
+
+          with open('vercel.json', encoding='utf-8') as f:
+              json.load(f)
+          PY
+
+      - name: Simulator bridge smoke test
+        env:
+          OZOPET_BRIDGE_KEY: ci-test-key
+        run: |
+          python bridge/ozopet_bridge.py --sim --port 8877 > /tmp/ozopet-bridge.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          sleep 1
+          curl -fsS -H 'X-OzoPet-Key: ci-test-key' http://127.0.0.1:8877/health
+          curl -fsS -X POST -H 'Content-Type: application/json' -H 'X-OzoPet-Key: ci-test-key' -d '{}' http://127.0.0.1:8877/connect
+          curl -fsS -X POST -H 'Content-Type: application/json' -H 'X-OzoPet-Key: ci-test-key' -d '{"action":"read_color"}' http://127.0.0.1:8877/action
+          curl -fsS -X POST -H 'Content-Type: application/json' -H 'X-OzoPet-Key: ci-test-key' -d '{}' http://127.0.0.1:8877/disconnect
