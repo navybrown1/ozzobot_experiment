@@ -107,15 +107,16 @@ class RobotController:
         import threading, time, traceback
         name = getattr(fn, "__name__", str(fn))
         timeout = self.OP_TIMEOUTS.get(name, self.DEFAULT_TIMEOUT)
-        print(f"[hw] submit {name} on worker (timeout={timeout}s)", flush=True)
+        ts = lambda: time.strftime("%H:%M:%S")
+        print(f"[hw {ts()}] submit {name} on worker (timeout={timeout}s)", flush=True)
         future = self._hw.submit(fn, *args)
         t0 = time.monotonic()
         try:
             result = future.result(timeout=timeout)
-            print(f"[hw] done {name} in {time.monotonic() - t0:.2f}s", flush=True)
+            print(f"[hw {ts()}] done {name} in {time.monotonic() - t0:.2f}s", flush=True)
             return result
         except FuturesTimeoutError:
-            print(f"[hw] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
+            print(f"[hw {ts()}] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
             with self._recovery_lock:
                 self._replace_worker_locked()
                 escalate = self._escalate_locked()
@@ -127,16 +128,17 @@ class RobotController:
                         self.connected = False
                     except Exception:
                         print("[hw] halt unconfirmed before recovery exit", flush=True)
-            if escalate:
-                print("[hw] repeated timeouts — exiting so supervisor restarts a clean "
-                      "bridge (only a process exit reliably releases the Bluetooth link)", flush=True)
-                os._exit(75)
+                if escalate:
+                    print("[hw] repeated timeouts — exiting so supervisor restarts a clean "
+                          "bridge (only a process exit reliably releases the Bluetooth link)", flush=True)
+                    print(f"[hw {time.strftime('%H:%M:%S')}] recovery exit", flush=True)
+                    os._exit(75)
             raise RuntimeError(
                 f"Hardware operation '{name}' timed out. The Bluetooth link was stuck; "
                 "the bridge recovered itself — try connecting again."
             ) from None
         except Exception as exc:
-            print(f"[hw] FAILED {name}:\n{traceback.format_exc()}", flush=True)
+            print(f"[hw {ts()}] FAILED {name}:\n{traceback.format_exc()}", flush=True)
             raise
 
     def _replace_worker_locked(self) -> None:
@@ -341,8 +343,14 @@ class RobotController:
     def _sequence_impl(self, steps: Any) -> dict[str, Any]:
         if not isinstance(steps, list):
             raise ValueError("'steps' must be a list")
-        if len(steps) > 16:
-            raise ValueError("'steps' must contain at most 16 steps")
+        # Enforcement point: a stale or buggy client must never be able to kill
+        # the radio link with a validation error. Oversized sequences are cut to
+        # the contract limit and reported via truncated=true (2026-08-22 council).
+        client_steps = len(steps)
+        if client_steps > 16:
+            steps = steps[:16]
+            print(f"[hw {time.strftime('%H:%M:%S')}] WARNING client sent {client_steps} steps — "
+                  "executing first 16 only (client may be stale)", flush=True)
         plan: list[tuple[int, dict[str, Any]]] = []
         for index, step in enumerate(steps):
             self._validate_sequence_step(index, step)
@@ -377,8 +385,9 @@ class RobotController:
             "ok": True,
             "action": "sequence",
             "results": results,
-            "truncated": truncated,
+            "truncated": truncated or client_steps > 16,
             "steps_executed": len(results),
+            "steps_received": client_steps,
         }
 
     def stop(self) -> dict[str, Any]:

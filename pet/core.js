@@ -284,7 +284,16 @@
     try {
       const res = await bridgeFetch('/sequence', { body: { steps: out, source } }, 10000);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `bridge ${res.status}`);
+      if (!res.ok || !data.ok) {
+        // A 4xx means the bridge ANSWERED — the radio link is alive. Only
+        // link-level failures (timeout / network / 5xx) may estop the session;
+        // refusing one trick must never sever the connection. (2026-08-22)
+        if (res.status >= 400 && res.status < 500 && res.status !== 401) {
+          Bus.emit('thought', { text: 'Hmm, that move did not go through. Let me try something else!', mood: 'nervous' });
+          return { ok: false, error: data.error || `bridge ${res.status}`, refused: true };
+        }
+        throw new Error(data.error || `bridge ${res.status}`);
+      }
       emitStepEvents(out, false);
       return { ok: true, truncated: !!data.truncated, results: data.results };
     } catch (err) {

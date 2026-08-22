@@ -804,5 +804,35 @@
     }, 700);
   }
 
+  /* ================= fresh-brain check =================
+     A tab left open across a deploy keeps running the OLD brain, which can
+     disagree with the bridge about the motion contract (2026-08-22 incident).
+     Poll version.json; on mismatch show a persistent kid-friendly banner.
+     Tap-to-reload only — never auto-reload while motors may be running. */
+  function freshBrainCheck() {
+    const META = document.querySelector('meta[name="ozi-build"]');
+    const BUILD = META ? META.content : 'dev';
+    if (BUILD === 'dev') return;
+    let announced = false;
+    setInterval(async () => {
+      if (announced || document.hidden) return;
+      try {
+        const res = await fetch('version.json?nocache=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.build && data.build !== BUILD) {
+          announced = true;
+          const el = document.createElement('div');
+          el.className = 'toast';
+          el.style.cursor = 'pointer';
+          el.innerHTML = '<b>OZI LEARNED NEW TRICKS</b><p>Tap here to update his brain.</p>';
+          el.addEventListener('click', () => location.reload(), { once: true });
+          $('#toastStack').appendChild(el);
+        }
+      } catch {}
+    }, 45000);
+  }
+
   boot();
+  freshBrainCheck();
 })();

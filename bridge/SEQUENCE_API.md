@@ -37,7 +37,7 @@ keys; execution order within a step is fixed: `led` → `tone` → `move` →
 
 | Parameter        | Range            | Out-of-range behavior            |
 |------------------|------------------|----------------------------------|
-| `steps` count    | 0..16            | >16 → 400                        |
+| `steps` count    | 0..16            | >16 → first 16 run; `truncated: true`, `steps_received` reports original count (2026-08-22: oversized sequences are no longer rejected — a stale client must never sever the radio link) |
 | `led` color name | PALETTE names: `mint`, `violet`, `amber`, `red`, `blue`, `off` | unknown name silently becomes `mint` |
 | `tone.frequency` | 180..1600        | clamped                          |
 | `tone.duration`  | 0.03..0.35 s     | clamped                          |
@@ -50,7 +50,7 @@ keys; execution order within a step is fixed: `led` → `tone` → `move` →
 
 Validation (→ `400 {"ok": false, "error": ...}`, nothing executes):
 
-- `steps` missing / not a list / longer than 16
+- `steps` missing / not a list
 - a step that is not an object, or an **empty** object
 - any **unknown key** on a step (only `led`, `tone`, `move`, `turn`, `wait` allowed)
 - `move`/`turn`/`tone` values that are not objects
