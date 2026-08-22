@@ -1,3 +1,7 @@
+/* OzoPet app glue — wires the behavior engine (pet/*.js) into the zine UI.
+   The engine owns state, needs, planner, memories, safety and hardware.
+   This file owns DOM: rendering, modals, request cards, arcade stage,
+   dance deck, songbook, floor-adventure panel, emergency stop. */
 (() => {
   'use strict';
 
@@ -5,33 +9,12 @@
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const clamp = (n, min = 0, max = 100) => Math.min(max, Math.max(min, n));
   const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-  const nowStamp = () => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
+  const escapeHTML = (str = '') => String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 
-  const DEFAULT_STATE = {
-    version: 1,
-    name: 'Ozi',
-    day: 1,
-    awake: true,
-    living: true,
-    mood: 'curious',
-    zone: 'nest',
-    vitals: { energy: 84, curiosity: 91, social: 63, confidence: 72, mischief: 82, boredom: 26, trust: 68 },
-    dna: { curiosity: 91, courage: 57, affection: 74, independence: 79, mischief: 88, patience: 31, obedience: 49, persistence: 84, weirdness: 93 },
-    memories: [
-      { text: 'Woke up and immediately distrusted the keyboard.', at: 'first light' },
-      { text: 'Decided the north edge of the desk probably contains secrets.', at: 'a moment ago' }
-    ],
-    dreams: [
-      { title: 'Keyboard Mountain', text: 'The keys became black cliffs. A purple door waited at the top. Behind it were forty-seven CrunchBytes and one extremely judgmental hand.', day: 0 }
-    ],
-    hardware: { connected: false, key: '' },
-    interactionCount: 0
-  };
-
-  const memoryKey = 'ozopet-state-v1';
-  let state = loadState();
-  let autoTimer = null;
-  let position = { x: 50, y: 52 };
+  const OP = window.OziPet || {};
+  const ENGINE = !!(OP.Bus && OP.Core && OP.Safety);
+  const Bus = OP.Bus;
+  let snap = null;
 
   const zones = {
     nest: { x: 20, y: 72, color: '#7ddcff', surface: 'blue/home' },
@@ -40,432 +23,240 @@
     mystery: { x: 76, y: 70, color: '#b780ff', surface: 'purple/unknown' },
     center: { x: 50, y: 52, color: '#74ffc8', surface: 'unclassified' }
   };
+  const zoneLabel = z => ({ nest: 'nest edge', food: 'crunchbyte grove', play: 'play halo', mystery: 'mystery puddle', center: 'open desk' })[z] || z;
+  const getColor = name => ({ mint: '#74ffc8', violet: '#b780ff', amber: '#ffd36c', red: '#ff667c', blue: '#7ddcff', cyan: '#4bd69d' })[name] || '#74ffc8';
 
-  const thoughts = {
-    hello: [
-      'There you are. I had started a formal complaint.',
-      'Acknowledgement received. Human presence accepted.',
-      'Hello. I was definitely not chewing on the concept of free will.',
-      'You came back. Good. The desk has been weird without supervision.'
-    ],
-    feed: [
-      'CrunchByte acquired. Diplomatic relations improve.',
-      'This is acceptable tribute.',
-      'NOM. I mean... nutritional protocol complete.',
-      'I have decided you may continue being my person.'
-    ],
-    explore: [
-      'There is absolutely something over there. Probably.',
-      'I must inspect the suspicious region.',
-      'New territory detected. Common sense temporarily disabled.',
-      'If this goes badly, I will document it as science.'
-    ],
-    dance: [
-      'You requested movement. I upgraded it to art.',
-      'Observe: unnecessary confidence.',
-      'I call this one The Charging Cable Incident.',
-      'Please note that I trained extensively for none of this.'
-    ],
-    mischief: [
-      'Interesting. You have chosen to encourage me.',
-      'Rules are merely lines the floor has opinions about.',
-      'I have identified a forbidden region. Naturally, I am interested.',
-      'Bad influence detected. Affection increased.'
-    ],
-    sleep: [
-      'Fine. But if I dream about hands again, we are discussing it tomorrow.',
-      'Entering low-power philosophical mode.',
-      'Good night. Please keep the keyboard from moving.',
-      'I will sleep. The desk remains under suspicion.'
-    ],
-    autonomous: [
-      'I have been thinking about the purple place again.',
-      'Nothing has happened for several minutes. This seems unacceptable.',
-      'I heard nothing. I am investigating anyway.',
-      'I have elected to entertain myself.',
-      'The desk has changed by at least zero percent. Concerning.',
-      'I would like it noted that boredom was not my idea.'
-    ]
-  };
-
-  const memoryTemplates = {
-    hello: ['You said hello. Ozi pretended this was not a big deal.', 'Ozi rolled closer when acknowledged.', 'Human contact logged as suspiciously pleasant.'],
-    feed: ['Received a CrunchByte and immediately forgave several imaginary offenses.', 'Snack ritual completed. Trust rose slightly.', 'Green zone produced food. Ozi will remember this.'],
-    explore: ['Investigated a new patch of desk without permission.', 'Curiosity won another argument.', 'Explored beyond the comfortable route and returned intact.'],
-    dance: ['Performed a dance with zero tactical value.', 'Spun dramatically and acted like it was planned.', 'Converted stored energy into nonsense.'],
-    mischief: ['Was encouraged to make a questionable decision.', 'Entered a region mostly because it looked forbidden.', 'Mischief received positive reinforcement. This may be a mistake.'],
-    sleep: ['Returned to the nest and powered down reluctantly.', 'Bedtime occurred after minor negotiations.', 'Went to sleep while maintaining a grudge against the keyboard.']
-  };
-
-  function loadState() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(memoryKey));
-      if (!saved || saved.version !== 1) return structuredClone(DEFAULT_STATE);
-      const base = structuredClone(DEFAULT_STATE);
-      return {
-        ...base,
-        ...saved,
-        vitals: { ...base.vitals, ...(saved.vitals || {}) },
-        dna: { ...base.dna, ...(saved.dna || {}) },
-        memories: sanitizeList(saved.memories, m => m && typeof m === 'object' && typeof m.text === 'string', 80, m => ({ text: safeSlice(m.text, 600), at: safeSlice(m.at, 80, 'unknown time') }), base.memories),
-        dreams: sanitizeList(saved.dreams, d => d && typeof d === 'object' && typeof d.text === 'string' && typeof d.title === 'string', 40, d => ({ title: safeSlice(d.title, 100, 'Untitled Dream'), text: safeSlice(d.text, 1200), day: Number.isFinite(d.day) ? Math.max(0, Math.floor(d.day)) : 0 }), base.dreams),
-        hardware: { ...base.hardware, ...(saved.hardware || {}), connected: false }
-      };
-    } catch {
-      return structuredClone(DEFAULT_STATE);
-    }
+  /* ================= toasts ================= */
+  function toast(title, text) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = `<b>${escapeHTML(title)}</b><p>${escapeHTML(text)}</p>`;
+    $('#toastStack').appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(12px)'; }, 3600);
+    setTimeout(() => el.remove(), 4100);
   }
 
-  function safeSlice(value, max, fallback = '') {
-    return (typeof value === 'string' ? value : fallback).slice(0, max);
-  }
-
-  function sanitizeList(value, isValid, cap, normalize, fallback) {
-    if (!Array.isArray(value)) return fallback;
-    return value.filter(isValid).slice(-cap).map(normalize);
-  }
-
-  function saveState() {
-    const safeState = structuredClone(state);
-    safeState.hardware.connected = false;
-    localStorage.setItem(memoryKey, JSON.stringify(safeState));
-  }
-
-  function renderAll() {
-    $('#dayCount').textContent = String(state.day).padStart(3, '0');
-    $('#petName').textContent = state.name.toUpperCase();
-    $('#moodWord').textContent = state.mood;
-    $('#livingLabel').textContent = state.living ? 'living mode' : 'quiet mode';
-    $('.pulse-dot').style.opacity = state.living ? '1' : '.28';
-    $('#trustScore').textContent = Math.round(state.vitals.trust);
-    $('#bondRing').style.setProperty('--bond', `${state.vitals.trust}%`);
-    $('#bondLabel').textContent = bondLabel(state.vitals.trust);
-    $('#relationshipThought').textContent = relationshipThought();
-    $('#archetype').textContent = archetype();
-    $('#dnaTag').textContent = `DNA // ${dnaCode()}`;
-    $('#habitatWeather').textContent = habitatWeather();
-    $('#mindText').textContent = mindThought();
-    $('#zoneReadout').textContent = zoneLabel(state.zone);
-    $('#bodyReadout').textContent = state.hardware.connected ? 'real Evo' : 'simulation';
-    $('#hardwareLabel').textContent = state.hardware.connected ? 'evo body attached' : 'simulated body';
-    $('#hardwareDot').classList.toggle('connected', state.hardware.connected);
-    $('#footerStatus').textContent = state.hardware.connected
-      ? (state.awake ? 'hardware bridge connected // safe command mode' : 'hardware bridge connected // motors idle')
-      : (state.awake ? 'simulation awake // no hardware commands sent' : 'simulation asleep // no hardware commands sent');
-    renderMeters();
-    renderMemories();
-    renderTags();
-    renderDNA();
-    renderDreams();
-    renderConnection();
-  }
-
-  function renderMeters() {
-    const visible = ['energy','curiosity','social','confidence','mischief','boredom'];
-    $('#meterList').innerHTML = visible.map(key => `
-      <div class="meter-row">
-        <label>${key}</label>
-        <div class="meter-track"><div class="meter-fill" style="width:${state.vitals[key]}%"></div></div>
-        <output>${Math.round(state.vitals[key])}</output>
-      </div>`).join('');
-  }
-
-  function renderMemories() {
-    const items = state.memories.slice(-8).reverse();
-    $('#memoryFeed').innerHTML = items.length ? items.map((m, i) => `
-      <div class="memory-item">
-        <div class="memory-index">${String(state.memories.length - i).padStart(2,'0')}</div>
-        <div><p>${escapeHTML(m.text)}</p><time>${escapeHTML(m.at)}</time></div>
-      </div>`).join('') : '<div class="memory-item"><div class="memory-index">--</div><div><p>No memories. This is either peaceful or alarming.</p></div></div>';
-  }
-
-  function renderTags() {
-    const tags = [state.mood, state.zone, state.vitals.boredom > 65 ? 'restless' : 'occupied', state.vitals.mischief > 75 ? 'bad ideas' : 'mostly lawful'];
-    $('#mindTags').innerHTML = tags.map(t => `<span>${escapeHTML(t)}</span>`).join('');
-  }
-
-  function renderDNA() {
-    const explain = {
-      curiosity:'pull toward novelty', courage:'approach unknown things', affection:'seek friendly contact', independence:'act without asking', mischief:'prefer interesting mistakes', patience:'wait before acting', obedience:'follow direct requests', persistence:'try again after failure', weirdness:'choose delightfully odd options'
-    };
-    $('#dnaGrid').innerHTML = Object.entries(state.dna)
-      .filter(([k]) => Object.prototype.hasOwnProperty.call(explain, k) && Number.isFinite(Number(state.dna[k])))
-      .map(([k, v]) => {
-        const shown = clamp(Math.round(Number(v)));
-        return `<div class="dna-item"><div class="dna-item-head"><span>${escapeHTML(k)}</span><strong>${shown}</strong></div><div class="meter-track"><div class="meter-fill" style="width:${shown}%"></div></div><p>${explain[k]}</p></div>`;
-      })
-      .join('');
-    $('#traitCombo').innerHTML = `<b>${escapeHTML(archetype().toUpperCase())}</b><br>${escapeHTML(traitSentence())}`;
-  }
-
-  function renderDreams() {
-    const dreams = state.dreams.length ? state.dreams : [{ title:'No dreams yet', text:'Put Ozi to bed, then come back here.', day:state.day }];
-    const latest = dreams[dreams.length - 1];
-    $('#dreamFeature').innerHTML = `<h3>${escapeHTML(latest.title)}</h3><p>${escapeHTML(latest.text)}</p>`;
-    $('#dreamList').innerHTML = dreams.slice().reverse().map((d,i) => `<button class="dream-thumb" data-dream-index="${state.dreams.length - 1 - i}"><b>DAY ${String(d.day || 0).padStart(3,'0')} // ${escapeHTML(d.title)}</b><small>${escapeHTML(d.text.slice(0,70))}${d.text.length>70?'…':''}</small></button>`).join('');
-    $$('[data-dream-index]').forEach(btn => btn.addEventListener('click', () => {
-      const d = state.dreams[Number(btn.dataset.dreamIndex)];
-      if (d) $('#dreamFeature').innerHTML = `<h3>${escapeHTML(d.title)}</h3><p>${escapeHTML(d.text)}</p>`;
-    }));
-  }
-
-  function renderConnection() {
-    const connected = state.hardware.connected;
-    $('#connectionOrb').classList.toggle('connected', connected);
-    $('#connectionTitle').textContent = connected ? 'Real Evo body attached' : 'No body attached';
-    $('#connectionDetail').textContent = connected ? 'The local bridge answered. Safe movement, LED, tone and surface-color tests are enabled.' : 'Start the bridge, paste its one-time key, then connect.';
-    if (state.hardware.key && !$('#bridgeKey').value) $('#bridgeKey').value = state.hardware.key;
-  }
-
-  function archetype() {
-    const d = state.dna;
-    if (d.mischief > 82 && d.curiosity > 80) return 'curious trickster';
-    if (d.affection > 82 && d.courage > 70) return 'loyal guardian';
-    if (d.independence > 82 && d.curiosity > 75) return 'wild explorer';
-    if (d.persistence > 80 && d.patience > 65) return 'patient scout';
-    return 'odd little companion';
-  }
-
-  function dnaCode() {
-    const nums = [state.dna.curiosity, state.dna.mischief, state.dna.weirdness];
-    return nums.map(n => Math.round(n).toString(16).toUpperCase().padStart(2,'0')).join('-');
-  }
-
-  function bondLabel(n) {
-    if (n >= 92) return 'trusted person';
-    if (n >= 82) return 'chosen human';
-    if (n >= 70) return 'growing bond';
-    if (n >= 55) return 'new friend';
-    return 'under review';
-  }
-
-  function relationshipThought() {
-    const t = state.vitals.trust;
-    if (t > 90) return 'Ozi expects you to return, bring interesting things, and prevent obviously bad desk decisions.';
-    if (t > 78) return 'Ozi trusts you enough to be annoying on purpose.';
-    if (t > 65) return 'Ozi is beginning to associate you with snacks, safety and entertainment.';
-    return 'Ozi is still deciding what kind of human you are.';
-  }
-
-  let weatherCache = { key: null, value: '' };
-  function habitatWeather() {
-    const key = !state.awake
-      ? 'asleep'
-      : `awake:${state.vitals.boredom > 70}:${state.vitals.mischief > 88}:${state.vitals.energy < 30}`;
-    if (weatherCache.key !== key) {
-      const options = !state.awake
-        ? ['dreaming quietly']
-        : state.vitals.boredom > 70 ? ['dangerously bored']
-        : state.vitals.mischief > 88 ? ['bad idea pressure']
-        : state.vitals.energy < 30 ? ['sleepy static']
-        : ['softly curious','mossy and alert','mildly suspicious','pleasantly weird'];
-      weatherCache = { key, value: pick(options) };
-    }
-    return weatherCache.value;
-  }
-
-  function mindThought() {
-    if (!state.awake) return 'The desk is gone. There is only Keyboard Mountain now.';
-    if (state.vitals.boredom > 70) return 'I require stimulation before I invent something worse.';
-    if (state.vitals.energy < 30) return 'I am awake in the technical sense only.';
-    if (state.zone === 'mystery') return 'Purple means unknown. Unknown means investigate. This logic is flawless.';
-    if (state.zone === 'food') return 'Green has a statistically meaningful relationship with CrunchBytes.';
-    if (state.zone === 'play') return 'This region appears legally distinct from responsibility.';
-    return pick(['You returned. I had not finished judging the keyboard.','I am considering a small journey with unreasonable confidence.','The desk is quiet. I do not trust this.']);
-  }
-
-  function traitSentence() {
-    const d = state.dna;
-    return `High curiosity (${d.curiosity}) and mischief (${d.mischief}) make Ozi investigate things that look forbidden. Low patience (${d.patience}) means waiting usually loses to action. Weirdness (${d.weirdness}) gives harmless odd behavior extra weight.`;
-  }
-
-  function zoneLabel(z) {
-    return ({nest:'nest edge', food:'crunchbyte grove', play:'play halo', mystery:'mystery puddle', center:'open desk'})[z] || z;
-  }
-
-  function modify(key, delta) {
-    state.vitals[key] = clamp(state.vitals[key] + delta);
-  }
-
-  function addMemory(text) {
-    state.memories.push({ text, at: nowStamp() });
-    if (state.memories.length > 80) state.memories = state.memories.slice(-80);
-  }
-
+  /* ================= creature visuals ================= */
   let popTimer = null;
-  function speak(text, mood = null) {
+  let recentThought = null;
+  function showThought(text) {
+    if (!$('#ambientText')) return;
+    recentThought = text;
     $('#ambientText').textContent = text;
     $('#mindText').textContent = text;
-    if (mood) state.mood = mood;
     const pop = $('#thoughtPop');
-    pop.textContent = pick(['?','!','✦','…','♥']);
+    pop.textContent = pick(['?', '!', '✦', '…', '♥']);
     pop.classList.add('show');
     clearTimeout(popTimer);
     popTimer = setTimeout(() => pop.classList.remove('show'), 1100);
   }
-
   function setLed(color) {
     $('#ozi').style.setProperty('--led', color);
     $('#habitatMoodDot').style.background = color;
     $('#habitatMoodDot').style.boxShadow = `0 0 10px ${color}`;
   }
-
   const animTimers = {};
-  function animate(cls, duration = 900) {
+  const ANIM_CLASS = { bop: 'bop', spin: 'spin', nervous: 'nervous', wiggle: 'ozi-wiggle', shiver: 'ozi-shiver', nod: 'ozi-nod', startle: 'ozi-startle' };
+  function animate(name, duration = 900) {
+    const cls = ANIM_CLASS[name] || 'bop';
     const el = $('#ozi');
     clearTimeout(animTimers[cls]);
-    el.classList.remove('bop','spin','nervous');
+    el.classList.remove('bop', 'spin', 'nervous', 'ozi-wiggle', 'ozi-shiver', 'ozi-nod', 'ozi-startle');
     void el.offsetWidth;
     el.classList.add(cls);
     animTimers[cls] = setTimeout(() => el.classList.remove(cls), duration);
   }
-
-  function moveTo(zoneName, hardware = false) {
+  function moveVisuals(zoneName) {
     const z = zones[zoneName] || zones.center;
-    state.zone = zoneName;
-    position = { x:z.x, y:z.y };
     $('#ozi').style.left = `${z.x}%`;
     $('#ozi').style.top = `${z.y}%`;
     $('#petShadow').style.left = `${z.x}%`;
     $('#petShadow').style.top = `${z.y + 9}%`;
     $('#zoneReadout').textContent = zoneLabel(zoneName);
     $('#surfaceReadout').textContent = z.surface;
-    setLed(z.color);
-    leaveTrail(z.x, z.y);
-    if (hardware && state.hardware.connected) safeHardwareZoneCue(zoneName);
-  }
-
-  function leaveTrail(x,y) {
-    for (let i=0;i<6;i++) {
+    for (let i = 0; i < 6; i++) {
       const dot = document.createElement('i');
-      dot.style.left = `${clamp(x + (Math.random()-.5)*10,4,96)}%`;
-      dot.style.top = `${clamp(y + (Math.random()-.5)*8,4,94)}%`;
+      dot.style.left = `${clamp(z.x + (Math.random() - .5) * 10, 4, 96)}%`;
+      dot.style.top = `${clamp(z.y + (Math.random() - .5) * 8, 4, 94)}%`;
       $('#trail').appendChild(dot);
       setTimeout(() => dot.remove(), 3100);
     }
   }
 
-  async function perform(action) {
-    if (!state.awake && action !== 'hello') {
-      speak('I am asleep. This feels like a boundary issue.', 'sleepy');
-      toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
-      return;
+  /* ================= rendering from engine snapshot ================= */
+  const bondLabel = n => n >= 92 ? 'trusted person' : n >= 82 ? 'chosen human' : n >= 70 ? 'growing bond' : n >= 55 ? 'new friend' : 'under review';
+  const relationshipThought = t => t > 90 ? 'Ozi expects you to return, bring interesting things, and prevent obviously bad desk decisions.'
+    : t > 78 ? 'Ozi trusts you enough to be annoying on purpose.'
+    : t > 65 ? 'Ozi is beginning to associate you with snacks, safety and entertainment.'
+    : 'Ozi is still deciding what kind of human you are.';
+  const archetype = d => d.mischief > 82 && d.curiosity > 80 ? 'curious trickster'
+    : d.affection > 82 && d.courage > 70 ? 'loyal guardian'
+    : d.independence > 82 && d.curiosity > 75 ? 'wild explorer'
+    : d.persistence > 80 && d.patience > 65 ? 'patient scout'
+    : 'odd little companion';
+  const dnaCode = d => [d.curiosity, d.mischief, d.weirdness].map(n => Math.round(n).toString(16).toUpperCase().padStart(2, '0')).join('-');
+  const NEED_KEYS = ['energy', 'hunger', 'affection', 'social', 'curiosity', 'boredom', 'confidence', 'trust', 'mischief', 'sleepiness', 'playfulness', 'stress'];
+
+  let weatherCache = { key: null, value: '' };
+  function habitatWeather(s) {
+    const key = !s.awake ? 'asleep' : `${s.mood}:${s.needs.boredom > 70}:${s.needs.energy < 30}`;
+    if (weatherCache.key !== key) {
+      weatherCache = { key, value: !s.awake ? pick(['dreaming quietly']) : s.needs.boredom > 70 ? ['dangerously bored'] : s.needs.energy < 30 ? ['sleepy static'] : pick(['softly curious', 'mossy and alert', 'mildly suspicious', 'pleasantly weird']) };
     }
-
-    state.interactionCount++;
-    switch(action) {
-      case 'hello':
-        state.awake = true; modify('social', 5); modify('trust', 1.5); modify('boredom', -9); setLed('#74ffc8'); animate('bop'); chirp('hello'); speak(pick(thoughts.hello), 'warm');
-        if (state.hardware.connected) hardwareAction('hello').catch(hardwareSoftFail);
-        break;
-      case 'feed':
-        modify('energy', 12); modify('trust', 2); modify('social', 2); modify('boredom', -4); moveTo('food'); animate('bop'); chirp('feed'); speak(pick(thoughts.feed), 'pleased');
-        if (state.hardware.connected) hardwareAction('led', { color:'mint' }).catch(hardwareSoftFail);
-        break;
-      case 'explore': {
-        const destination = pick(['play','mystery','center','food']);
-        modify('curiosity', -4); modify('confidence', 1); modify('energy', -7); modify('boredom', -15); moveTo(destination, true); animate('bop'); chirp('explore'); speak(pick(thoughts.explore), 'curious');
-        if (state.hardware.connected) hardwareAction('move', { distance:60, speed:55 }).catch(hardwareSoftFail);
-        break;
-      }
-      case 'dance':
-        modify('energy', -9); modify('social', 6); modify('boredom', -18); modify('mischief', 2); setLed('#ffd36c'); animate('spin'); chirp('dance'); speak(pick(thoughts.dance), 'delighted');
-        if (state.hardware.connected) hardwareAction('dance').catch(hardwareSoftFail);
-        break;
-      case 'mischief':
-        modify('mischief', 5); modify('trust', 1); modify('confidence', 3); modify('boredom', -22); moveTo('mystery', true); setLed('#b780ff'); animate('nervous'); chirp('mischief'); speak(pick(thoughts.mischief), 'scheming');
-        if (state.hardware.connected) hardwareAction('turn', { angle:45, speed:70 }).catch(hardwareSoftFail);
-        break;
-      case 'sleep':
-        state.awake = false; modify('energy', 14); modify('boredom', -5); moveTo('nest'); setLed('#7ddcff'); chirp('sleep'); speak(pick(thoughts.sleep), 'sleepy');
-        if (state.hardware.connected) hardwareAction('led', { color:'blue' }).catch(hardwareSoftFail);
-        break;
-    }
-    addMemory(pick(memoryTemplates[action] || [`Ozi did ${action}.`]));
-    driftDNA(action);
-    saveState(); renderAll();
+    return weatherCache.value;
   }
 
-  function driftDNA(action) {
-    const delta = .25;
-    if (action === 'explore') state.dna.curiosity = clamp(state.dna.curiosity + delta);
-    if (action === 'mischief') state.dna.mischief = clamp(state.dna.mischief + delta);
-    if (action === 'hello') state.dna.affection = clamp(state.dna.affection + delta/2);
-    if (action === 'sleep') state.dna.patience = clamp(state.dna.patience + delta/3);
+  function renderAll() {
+    snap = ENGINE ? OP.Core.snapshot() : null;
+    if (!snap) return;
+    $('#dayCount').textContent = String(snap.day).padStart(3, '0');
+    $('#petName').textContent = snap.name.toUpperCase();
+    $('#moodWord').textContent = snap.mood;
+    $('#livingLabel').textContent = snap.living ? 'living mode' : 'quiet mode';
+    $('.pulse-dot').style.opacity = snap.living ? '1' : '.28';
+    $('#trustScore').textContent = Math.round(snap.needs.trust);
+    $('#bondRing').style.setProperty('--bond', `${snap.needs.trust}%`);
+    $('#bondLabel').textContent = bondLabel(snap.needs.trust);
+    $('#relationshipThought').textContent = relationshipThought(snap.needs.trust);
+    $('#archetype').textContent = archetype(snap.dna);
+    $('#dnaTag').textContent = `DNA // ${dnaCode(snap.dna)}`;
+    $('#habitatWeather').textContent = habitatWeather(snap);
+    if (!recentThought) $('#mindText').textContent = defaultMindLine(snap);
+    $('#zoneReadout').textContent = zoneLabel(snap.zone);
+    $('#bodyReadout').textContent = connected ? 'real Evo' : 'simulation';
+    $('#hardwareLabel').textContent = connected ? 'evo body attached' : 'simulated body';
+    $('#hardwareDot').classList.toggle('connected', connected);
+    renderFooter();
+    renderMeters();
+    renderMemories();
+    renderTags();
+    renderDNA();
+    renderDreams();
+    renderConnection();
+    renderFloorPanel();
   }
 
-  function autonomousTick() {
-    if (!state.living || !state.awake) return scheduleAuto();
-    modify('boredom', 3 + Math.random()*4);
-    modify('energy', -1.2);
-    const curiosityPressure = state.dna.curiosity + state.vitals.boredom + state.dna.independence;
-    const mischiefPressure = state.dna.mischief + state.vitals.boredom;
-    if (mischiefPressure > 160 && Math.random() < .52) {
-      moveTo('mystery', state.hardware.connected);
-      setLed('#b780ff'); animate('nervous');
-      const line = pick(['I found a region with poor supervision.','I have become interested in the least responsible direction.','This looks forbidden enough to be educational.']);
-      speak(line, 'scheming'); addMemory('Ozi initiated a small unauthorized expedition.');
-      if (state.hardware.connected) hardwareAction('turn', { angle:30, speed:60 }).catch(hardwareSoftFail);
-    } else if (curiosityPressure > 180 && Math.random() < .62) {
-      moveTo(pick(['play','food','center']), state.hardware.connected); animate('bop'); speak(pick(thoughts.autonomous), 'curious');
-      if (state.hardware.connected) hardwareAction('move', { distance:40, speed:45 }).catch(hardwareSoftFail);
-    } else {
-      speak(pick(thoughts.autonomous), state.mood);
-    }
-    saveState(); renderAll(); scheduleAuto();
+  function defaultMindLine(s) {
+    if (!s.awake) return 'The desk is gone. There is only Keyboard Mountain now.';
+    if (s.needs.boredom > 70) return 'I require stimulation before I invent something worse.';
+    if (s.needs.hunger > 70) return 'The hunger has started filing paperwork.';
+    if (s.needs.sleepiness > 75) return 'I am awake in the technical sense only.';
+    return pick(['I am considering a small journey with unreasonable confidence.', 'The desk is quiet. I do not trust this.', 'Status: present, weird, operational.']);
   }
 
-  function scheduleAuto() {
-    clearTimeout(autoTimer);
-    autoTimer = setTimeout(autonomousTick, 18000 + Math.random()*19000);
+  function renderFooter() {
+    const mode = OP.Safety?.state?.().mode || 'desk';
+    const suffix = connected
+      ? (mode === 'floor' ? '// FLOOR ADVENTURE // supervised' : '// desk mode // motors locked')
+      : '// no hardware commands sent';
+    $('#footerStatus').textContent = (snap.awake ? 'awake ' : 'asleep ') + (connected ? 'hardware bridge connected ' : 'simulation ') + suffix;
   }
 
-  function chirp(kind='hello') {
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const seq = ({hello:[[660,.06],[880,.08]],feed:[[520,.05],[760,.05],[980,.07]],explore:[[440,.06],[610,.06]],dance:[[523,.07],[659,.07],[784,.09]],mischief:[[330,.08],[495,.05],[370,.07]],sleep:[[523,.08],[392,.1],[262,.14]]})[kind] || [[600,.08]];
-      let t = ctx.currentTime;
-      seq.forEach(([freq,dur]) => {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.type = 'sine'; osc.frequency.value = freq;
-        gain.gain.setValueAtTime(.045,t); gain.gain.exponentialRampToValueAtTime(.001,t+dur);
-        osc.connect(gain).connect(ctx.destination); osc.start(t); osc.stop(t+dur+.01); t += dur+.025;
-      });
-      setTimeout(() => ctx.close(), 700);
-    } catch {}
+  function renderMeters() {
+    $('#meterList').innerHTML = NEED_KEYS.map(key => `
+      <div class="meter-row">
+        <label>${key}</label>
+        <div class="meter-track"><div class="meter-fill" style="width:${snap.needs[key]}%"></div></div>
+        <output>${Math.round(snap.needs[key])}</output>
+      </div>`).join('');
   }
 
-  function generateDream() {
-    const recent = state.memories.slice(-5).map(m => m.text.toLowerCase()).join(' ');
-    const subjects = [];
-    if (recent.includes('snack') || recent.includes('crunch')) subjects.push('CrunchByte');
-    if (recent.includes('purple') || recent.includes('forbidden') || recent.includes('unauthorized')) subjects.push('Purple Door');
-    if (recent.includes('dance') || recent.includes('spin')) subjects.push('Infinite Spin');
-    if (recent.includes('explor')) subjects.push('Map With No Edge');
-    const subject = subjects.length ? pick(subjects) : pick(['Keyboard Mountain','The Giant Hand','Blue Ocean','Charging Cable Forest','The Quiet Desk']);
-    const endings = [
-      'At the end was a tiny green light that knew Ozi by name.',
-      'Every path led back to the nest except one, which led directly into Tuesday.',
-      'The keyboard apologized. Ozi did not accept immediately.',
-      'A hand appeared, offered a CrunchByte, and then became a staircase.',
-      'The whole desk folded into a paper map and drifted away.'
-    ];
-    const text = `Ozi dreamed about ${subject.toLowerCase()}. ${pick(['The desk was enormous and gravity had become optional.','All the colored zones had traded places overnight.','Every object was softly glowing and slightly suspicious.','The floor kept whispering directions that contradicted each other.'])} ${pick(endings)}`;
-    state.dreams.push({ title: subject, text, day: state.day });
-    if (state.dreams.length > 40) state.dreams = state.dreams.slice(-40);
-    addMemory(`Dreamed about ${subject}. The details remain legally questionable.`);
-    saveState(); renderAll(); toast('Dream archived', subject);
+  function renderMemories() {
+    const items = snap.memories.slice(-8).reverse();
+    $('#memoryFeed').innerHTML = items.length ? items.map((m, i) => `
+      <div class="memory-item kind-${escapeHTML(m.kind || 'moment')}">
+        <div class="memory-index">${String(snap.memories.length - i).padStart(2, '0')}</div>
+        <div><p>${escapeHTML(m.text)}</p><time>${escapeHTML(m.at)}</time></div>
+      </div>`).join('') : '<div class="memory-item"><div class="memory-index">--</div><div><p>No memories. This is either peaceful or alarming.</p></div></div>';
+  }
+
+  function renderTags() {
+    const tags = [snap.mood, zoneLabel(snap.zone), snap.needs.boredom > 65 ? 'restless' : 'occupied', snap.needs.mischief > 78 ? 'bad ideas' : 'mostly lawful'];
+    $('#mindTags').innerHTML = tags.map(t => `<span>${escapeHTML(t)}</span>`).join('');
+  }
+
+  function renderDNA() {
+    const explain = { curiosity: 'pull toward novelty', courage: 'approach unknown things', affection: 'seek friendly contact', independence: 'act without asking', mischief: 'prefer interesting mistakes', patience: 'wait before acting', obedience: 'follow direct requests', persistence: 'try again after failure', weirdness: 'choose delightfully odd options' };
+    $('#dnaGrid').innerHTML = Object.entries(snap.dna)
+      .filter(([k]) => Object.prototype.hasOwnProperty.call(explain, k))
+      .map(([k, v]) => {
+        const shown = clamp(Math.round(Number(v)));
+        return `<div class="dna-item"><div class="dna-item-head"><span>${escapeHTML(k)}</span><strong>${shown}</strong></div><div class="meter-track"><div class="meter-fill" style="width:${shown}%"></div></div><p>${explain[k]}</p></div>`;
+      }).join('');
+    const d = snap.dna;
+    $('#traitCombo').innerHTML = `<b>${escapeHTML(archetype(d).toUpperCase())}</b><br>High curiosity (${Math.round(d.curiosity)}) and mischief (${Math.round(d.mischief)}) steer choices. Courage (${Math.round(d.courage)}) decides whether unknown zones get visited. Weirdness (${Math.round(d.weirdness)}) keeps odd behavior in rotation.`;
+  }
+
+  function renderDreams() {
+    const dreams = snap.dreams.length ? snap.dreams : [{ title: 'No dreams yet', text: 'Put Ozi to bed, then come back here.', day: snap.day }];
+    const latest = dreams[dreams.length - 1];
+    $('#dreamFeature').innerHTML = `<h3>${escapeHTML(latest.title)}</h3><p>${escapeHTML(latest.text)}</p>`;
+    $('#dreamList').innerHTML = dreams.slice().reverse().map((d, i) =>
+      `<button class="dream-thumb" data-dream-index="${dreams.length - 1 - i}"><b>DAY ${String(d.day || 0).padStart(3, '0')} // ${escapeHTML(d.title)}</b><small>${escapeHTML(d.text.slice(0, 70))}${d.text.length > 70 ? '…' : ''}</small></button>`).join('');
+    $$('[data-dream-index]').forEach(btn => btn.addEventListener('click', () => {
+      const d = snap.dreams[Number(btn.dataset.dreamIndex)];
+      if (d) $('#dreamFeature').innerHTML = `<h3>${escapeHTML(d.title)}</h3><p>${escapeHTML(d.text)}</p>`;
+    }));
+  }
+
+  function renderConnection() {
+    $('#connectionOrb').classList.toggle('connected', connected);
+    $('#connectionTitle').textContent = connected ? 'Real Evo body attached' : 'No body attached';
+    $('#connectionDetail').textContent = connected ? 'The local bridge answered. Safe movement, LED, tone and surface-color tests are enabled.' : 'Start the bridge, paste its one-time key, then connect.';
+    if (snap.hardware.key && !$('#bridgeKey').value) $('#bridgeKey').value = snap.hardware.key;
+  }
+
+  /* ================= request cards ================= */
+  let requestHideTimer = null;
+  function showRequestCard(r) {
+    const card = $('#oziRequestCard');
+    card.innerHTML = '';
+    const b = document.createElement('b'); b.textContent = r.title || 'Ozi wants something';
+    const p = document.createElement('p'); p.textContent = r.text || '';
+    const row = document.createElement('div'); row.className = 'request-actions';
+    (r.options || [{ label: 'PLAY', value: 'accept' }, { label: 'LATER', value: 'later' }]).forEach(opt => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'request-btn'; btn.dataset.value = opt.value; btn.textContent = opt.label;
+      btn.addEventListener('click', () => hideRequestCard() || OP.Core.resolveRequest(r.id, opt.value));
+      row.appendChild(btn);
+    });
+    card.append(b, p, row);
+    card.hidden = false; card.classList.add('show');
+    clearTimeout(requestHideTimer);
+    requestHideTimer = setTimeout(hideRequestCard, (r.timeoutSec || 30) * 1000 + 500);
+  }
+  function hideRequestCard() {
+    clearTimeout(requestHideTimer);
+    const card = $('#oziRequestCard');
+    card.classList.remove('show'); card.hidden = true; card.innerHTML = '';
+  }
+
+  /* ================= emergency stop ================= */
+  function onEstop(data) {
+    OP.Follow?.stop?.();
+    stopPreview();
+    $('#oziEStop').hidden = true;
+    $('#oziEstopBanner').hidden = false;
+    $('#oziEstopReason').textContent = data?.reason ? `— ${data.reason}` : '';
+    setConnectedUI(false);
+    toast('EMERGENCY STOP', 'All motion commands cut. Ozi returns to simulation-only.');
+  }
+
+  /* ================= hardware lab (legacy flow + safety) ================= */
+  let connected = false;
+  function setConnectedUI(v) {
+    connected = v === true;
+    if (ENGINE) OP.Safety.setConnected(connected);
+    if (snap) { renderAll(); } else { $('#connectionOrb')?.classList.toggle('connected', connected); }
   }
 
   async function hardwareRequest(path, body = null) {
-    const key = ($('#bridgeKey').value || state.hardware.key || '').trim();
-    const headers = { 'Content-Type':'application/json', 'X-OzoPet-Key': key };
+    const key = ($('#bridgeKey').value || '').trim();
+    const headers = { 'Content-Type': 'application/json', 'X-OzoPet-Key': key };
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 6000);
     try {
-      const res = await fetch(`http://127.0.0.1:8787${path}`, { method: body ? 'POST':'GET', headers, body: body ? JSON.stringify(body) : undefined, signal:ctrl.signal, mode:'cors' });
+      const res = await fetch(`http://127.0.0.1:8787${path}`, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal, mode: 'cors' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `bridge returned ${res.status}`);
       return data;
@@ -476,165 +267,491 @@
   async function connectBridge() {
     if (connectingBridge) return;
     const key = $('#bridgeKey').value.trim();
-    if (!key) return toast('Bridge key missing','Run bridge/ozopet_bridge.py and paste the key it prints.');
-    state.hardware.key = key;
+    if (!key) return toast('Bridge key missing', 'Run bridge/ozopet_bridge.py and paste the key it prints.');
     connectingBridge = true;
     try {
       const health = await hardwareRequest('/health');
       if (!health.ok) throw new Error('bridge health check failed');
       const result = await hardwareRequest('/connect', {});
-      state.hardware.connected = !!result.connected;
+      setConnectedUI(!!result.connected);
       $('#surfaceReadout').textContent = result.surface || 'waiting';
-      saveState(); renderAll();
       toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
-      if (state.hardware.connected) {
-        await hardwareAction('led', { color:'mint' });
-        await hardwareAction('tone', { frequency:660, duration:.08 });
+      if (connected) {
+        await hardwareAction('led', { color: 'mint' }).catch(() => {});
+        await hardwareAction('tone', { frequency: 660, duration: .08 }).catch(() => {});
+        $('#oziEStop').hidden = false;
       }
     } catch (err) {
-      state.hardware.connected = false; renderAll();
+      setConnectedUI(false);
       toast('Bridge did not connect', humanError(err));
-    } finally {
-      connectingBridge = false;
-    }
+    } finally { connectingBridge = false; }
   }
 
   async function disconnectBridge() {
-    try { if (state.hardware.connected) await hardwareRequest('/disconnect', {}); } catch {}
-    state.hardware.connected = false; saveState(); renderAll(); toast('Hardware detached','Ozi is back in simulation-only mode.');
+    try { if (connected) await hardwareRequest('/disconnect', {}); } catch {}
+    setConnectedUI(false);
+    $('#oziEStop').hidden = true;
+    toast('Hardware detached', 'Ozi is back in simulation-only mode.');
   }
 
   async function hardwareAction(action, payload = {}) {
-    if (!state.hardware.connected) throw new Error('hardware not connected');
+    if (!connected) throw new Error('hardware not connected');
     return hardwareRequest('/action', { action, ...payload });
   }
 
   function hardwareSoftFail(err) {
-    if (!state.hardware.connected) return;
-    state.hardware.connected = false; saveState(); renderAll();
+    if (!connected) return;
+    setConnectedUI(false);
+    $('#oziEStop').hidden = true;
     toast('Hardware went quiet', humanError(err));
-  }
-
-  async function safeHardwareZoneCue(zoneName) {
-    const map = { food:'mint', play:'amber', mystery:'violet', nest:'blue', center:'mint' };
-    try { await hardwareAction('led', { color: map[zoneName] || 'mint' }); } catch (e) { hardwareSoftFail(e); }
   }
 
   function humanError(err) {
     if (err?.name === 'AbortError') return 'The local bridge did not answer in time.';
-    if (/fetch/i.test(err?.message || '')) return 'Could not reach http://127.0.0.1:8787. Start the local bridge on the PC running the browser.';
+    if (/fetch/i.test(err?.message || '')) return 'Could not reach http://127.0.0.1:8787. Start the local bridge on this computer first.';
     return err?.message || 'Unknown bridge error.';
   }
 
+  /* ================= floor adventure panel ================= */
+  let previewStream = null;
+  let followTarget = null;
+  try {
+    const savedTarget = JSON.parse(localStorage.getItem('ozi-follow-target'));
+    if (savedTarget && Number.isFinite(savedTarget.h)) followTarget = savedTarget;
+  } catch {}
+
+  function floorState() { return ENGINE ? OP.Safety.state() : { connected: false, mode: 'desk', floorConfirmed: false }; }
+
+  function renderFloorPanel() {
+    const st = floorState();
+    $('#oziModeDesk').classList.toggle('active', st.mode !== 'floor');
+    $('#oziModeFloor').classList.toggle('active', st.mode === 'floor');
+    $('#oziFloorConfirm').checked = st.floorConfirmed;
+    const armed = st.floorConfirmed && !!OP.Follow?.available?.();
+    $$('.follow-btn').forEach(b => b.disabled = !armed);
+    $('#oziFollowStatus').textContent = followStatusText(st);
+  }
+
+  function followStatusText(st) {
+    if (!OP.Follow?.available?.()) return 'camera unavailable in this browser // follow modes disabled';
+    if (st.mode !== 'floor' || !st.floorConfirmed) return 'idle // switch to FLOOR and confirm the clear-floor area to arm follow modes.';
+    if (followTarget) return `armed // target h≈${Math.round(followTarget.h)}° — start a mode below. STOP button always works.`;
+    return 'armed // tap the camera preview on your color card to calibrate, then start a mode below.';
+  }
+
+  async function startPreview() {
+    if (!navigator.mediaDevices?.getUserMedia) return toast('No camera API', 'This browser cannot provide a camera preview.');
+    try {
+      stopPreview();
+      previewStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 320 } }, audio: false });
+      const video = $('#oziCamVideo');
+      video.srcObject = previewStream;
+      await video.play().catch(() => {});
+      $('#oziFollowStatus').textContent = 'preview live // tap the video on the color card you want Ozi to chase.';
+    } catch (err) {
+      toast('Camera refused', err?.name === 'NotAllowedError' ? 'Permission denied. Allow camera access to use Follow modes.' : 'No usable camera found.');
+    }
+  }
+
+  function stopPreview() {
+    if (previewStream) { previewStream.getTracks().forEach(t => t.stop()); previewStream = null; }
+    const video = $('#oziCamVideo');
+    if (video) video.srcObject = null;
+  }
+
+  function bindCalibrate(el) {
+    el.addEventListener('click', ev => {
+      const video = $('#oziCamVideo'), canvas = $('#oziCamCanvas');
+      if (!video || video.readyState < 2) return toast('No picture yet', 'Click PREVIEW CAMERA and allow access first.');
+      const rect = el.getBoundingClientRect();
+      const scaleX = (el.videoWidth || canvas.width) / rect.width;
+      const scaleY = (el.videoHeight || canvas.height) / rect.height;
+      const x = (ev.clientX - rect.left) * scaleX;
+      const y = (ev.clientY - rect.top) * scaleY;
+      Promise.resolve(OP.Follow.calibrate({ video, canvas, x, y })).then(res => {
+        if (res && Number.isFinite(res.h)) {
+          followTarget = { h: res.h, s: res.s ?? .8, v: res.v ?? .5 };
+          try { localStorage.setItem('ozi-follow-target', JSON.stringify(followTarget)); } catch {}
+          $('#oziFollowStatus').textContent = `CALIBRATED // hue ≈ ${res.h}° (${res.count} px sampled). Start a mode below.`;
+          toast('Color locked', `Ozi will chase hue ${res.h}°.`);
+        } else {
+          $('#oziFollowStatus').textContent = 'CALIBRATION FAILED // low-signal region — try a brighter, more saturated card.';
+        }
+        renderFloorPanel();
+      });
+    });
+  }
+
+  async function startFollowMode(modeName) {
+    const st = floorState();
+    if (!st.connected) return toast('No real body', 'Connect the bridge before Floor Adventure.');
+    if (!OP.Follow.available()) return toast('No camera', 'Follow modes need webcam access.');
+    if (!st.floorConfirmed) return toast('Floor not confirmed', 'Switch to FLOOR and tick the clear-floor confirmation first.');
+    stopPreview();
+    const ok = await OP.Follow.start(modeName, { video: $('#oziCamVideo'), canvas: $('#oziCamCanvas'), targetColor: followTarget });
+    if (ok !== false) {
+      $('#oziFollowStatus').textContent = `${modeName.toUpperCase()} ACTIVE // huge red STOP button is always live.`;
+      try { const s = OP.Core.getState(); s.counters.follows++; if (s.counters.follows === 1) OP.Core.unlockDiscovery('FIRST_FOLLOW'); OP.Store.saveSoon(); } catch {}
+    }
+  }
+
+  /* ================= dance deck / songbook / arcade ================= */
+  const HEARD_KEY = 'ozi-heard-songs';
+  function heardSongs() {
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(HEARD_KEY)); } catch {}
+    if (!Array.isArray(arr)) arr = [];
+    const out = arr.filter(x => typeof x === 'string').slice(0, 40);
+    for (const d of ['humming', 'greeting']) if (!out.includes(d)) out.push(d);
+    return out;
+  }
+  function markHeard(id) {
+    if (!id) return;
+    const list = heardSongs();
+    if (!list.includes(id)) { list.push(id); try { localStorage.setItem(HEARD_KEY, JSON.stringify(list.slice(-40))); } catch {} }
+  }
+
+  function renderDanceDeck() {
+    const host = $('#danceDeck');
+    if (!host) return;
+    const unlocked = !!snap?.flags?.secretDanceUnlocked;
+    const dances = (OP.Perform.listDances() || []).filter(d => !d.secret || unlocked);
+    host.innerHTML = dances.map(d => `
+      <div class="cassette-row" data-dance="${escapeHTML(d.id)}">
+        <div class="row-glyph">♪</div>
+        <div><span class="row-title">${escapeHTML(d.title)}${d.secret ? ' <small>SECRET</small>' : ''}</span><p class="row-desc">${escapeHTML(d.desc || '')}</p></div>
+        <button class="row-play" data-play-dance="${escapeHTML(d.id)}">PLAY</button>
+      </div>`).join('');
+    $$('[data-play-dance]').forEach(btn => btn.addEventListener('click', () => {
+      OP.Core.dance(btn.dataset.playDance);
+      $$('.cassette-row').forEach(r => r.classList.toggle('now-playing', r.dataset.dance === btn.dataset.playDance));
+    }));
+  }
+
+  function renderSongbook() {
+    const host = $('#songList');
+    if (!host) return;
+    const heard = heardSongs();
+    host.innerHTML = (OP.Perform.listSongs() || []).map(s => {
+      const isHeard = heard.includes(s.id);
+      return `<div class="song-row ${isHeard ? 'heard' : 'locked'}" data-song="${escapeHTML(s.id)}">
+        <div class="row-glyph">♫</div>
+        <div><span class="row-title">${isHeard ? escapeHTML(s.title) : '??? — unheard'}</span><p class="row-desc">${isHeard ? escapeHTML(s.mood || 'original melody') : 'Hear it from Ozi first.'}</p></div>
+        ${isHeard ? `<button class="row-play" data-play-song="${escapeHTML(s.id)}">PLAY</button>` : '<span></span>'}
+      </div>`;
+    }).join('');
+    $$('[data-play-song]').forEach(btn => btn.addEventListener('click', () => {
+      OP.Perform.song(btn.dataset.playSong);
+      markHeard(btn.dataset.playSong);
+      $$('.song-row').forEach(r => r.classList.toggle('playing', r.dataset.song === btn.dataset.playSong));
+    }));
+  }
+
+  function renderArcade() {
+    const grid = $('#missionGrid');
+    if (!grid) return;
+    grid.innerHTML = (OP.Games.listMissions() || []).map(m => `
+      <div class="mission-card">
+        ${m.needsFloor ? '<span class="floor-stamp">BEST ON FLOOR</span>' : ''}
+        <div class="mission-head"><span class="mission-glyph">${escapeHTML(m.glyph || '◆')}</span><b>${escapeHTML(m.title)}</b></div>
+        <p>${escapeHTML(m.desc || '')}</p>
+        <button class="mission-start" data-mission="${escapeHTML(m.id)}">START</button>
+      </div>`).join('');
+    $$('[data-mission]').forEach(btn => btn.addEventListener('click', () => launchMission(btn.dataset.mission)));
+  }
+
+  function stage(html) { const s = $('#gameStage'); if (s) s.innerHTML = html; }
+  const stageLine = (text, cls = '') => `<p class="stage-line ${cls}">${escapeHTML(text)}</p>`;
+
+  function simonGlyph(entry) {
+    const colorHex = getColor(entry.color);
+    return `<span class="simon-glyph" style="--swatch:${colorHex}">${entry.direction === 'left' ? '◀' : entry.direction === 'right' ? '▶' : '●'}</span>`;
+  }
+
+  let padBound = false;
+  function showInputPad(round) {
+    if (!padBound) {
+      $$('.pad-btn').forEach(b => b.addEventListener('click', () => {
+        OP.Games.input('simon', b.dataset.pad);
+      }));
+      padBound = true;
+    }
+    stage(`<p class="stage-line big">YOUR TURN — round ${round}</p><div class="input-pad">
+      <button class="pad-btn" data-pad="mint" style="--swatch:#74ffc8">M</button>
+      <button class="pad-btn" data-pad="violet" style="--swatch:#b780ff">V</button>
+      <button class="pad-btn" data-pad="amber" style="--swatch:#ffd36c">A</button>
+      <button class="pad-btn" data-pad="blue" style="--swatch:#7ddcff">B</button>
+      <button class="pad-btn" data-pad="left">◀</button>
+      <button class="pad-btn" data-pad="right">▶</button>
+    </div>`);
+  }
+
+  function renderGamePhase(p) {
+    if (!p || typeof p !== 'object') return;
+    switch (p.phase) {
+      case 'start': stage(stageLine(`MISSION STARTED // ${p.game}`, 'big')); break;
+      case 'watch': stage(stageLine(`WATCH THE PATTERN — round ${p.round}/${p.totalRounds || 3}`, 'big') + `<div class="simon-seq">${(p.seq || []).map(simonGlyph).join('')}</div>`); break;
+      case 'input': showInputPad(p.round); break;
+      case 'result': stage(stageLine(p.won ? `FLAWLESS — round ${p.round} cleared.` : `Pattern collapsed at round ${p.round}. Ozi is being gracious about it. Probably.`, p.won ? 'win' : 'bad')); break;
+      case 'state': stage(`<div class="lamp ${p.light}"></div>` + stageLine(p.light === 'green' ? 'GREEN — Ozi wiggles.' : 'RED — freeze!', 'big')); break;
+      case 'end': stage(stageLine(p.caught ? `Caught mid-wiggle ${p.caughtTimes || ''}time(s). Confidence shaken, comedy intact.` : `Clean rounds won: ${p.wins}. Suspicious discipline.`)); break;
+      case 'party': stage(stageLine(`NOW PLAYING: ${p.track}`, 'violet')); break;
+      case 'seek': stage(stageLine(`FIND: ${p.label} — place Evo on the ${p.color} card`, 'big') + (p.retry ? stageLine('not it. suspicious. try again.') : '')); break;
+      case 'found': stage(stageLine(p.msg || (p.matched ? `FOUND IT — surface reads ${p.surface}.` : `Surface reads ${p.surface}. Not the one.`))); break;
+      case 'summary': stage(stageLine(`Hunt complete: ${p.matched}/${p.total} colors confirmed.`)); break;
+      case 'box': stage(stageLine(`MYSTERY BOX: ${p.surface} → ${p.outcome}`, 'violet')); break;
+      case 'patrol': stage(stageLine(`GUARDING — ${p.sec}s left on shift.`)); break;
+      case 'alert': stage(stageLine(`PROXIMITY ALERT — something at ${p.side}. Guarding works.`, 'bad')); break;
+      case 'countdown': stage(stageLine(p.n > 0 ? `HIDING IN… ${p.n}` : 'READY OR NOT…', 'big')); break;
+      case 'found2': case 'found-seek': break;
+      case 'stopped': stage(stageLine('Mission aborted. No further questions.')); break;
+      case 'error': stage(stageLine(`Mission error: ${p.detail || 'unknown'}`, 'bad')); break;
+      case 'msg': stage(stageLine(p.msg || '')); break;
+      default:
+        if (p.msg) stage(stageLine(p.msg));
+    }
+  }
+
+  async function launchMission(id) {
+    if (OP.Games.busy()) return toast('Already playing', 'One mission at a time — abort the current one first.');
+    try {
+      const result = await OP.Games.start(id);
+      if (result && result.ok === false) stage(stageLine(`Mission declined by the engine: ${result.error || 'unknown'}`, 'bad'));
+      renderAll();
+    } catch (err) {
+      stage(stageLine(String(err?.message || err), 'bad'));
+    }
+  }
+
+  /* ================= modals ================= */
   let lastFocused = null;
   function openModal(id) {
     lastFocused = document.activeElement;
     $('#modalLayer').classList.add('open');
-    $('#modalLayer').setAttribute('aria-hidden','false');
+    $('#modalLayer').setAttribute('aria-hidden', 'false');
     $$('.modal').forEach(m => m.classList.toggle('active', m.id === id));
     document.body.style.overflow = 'hidden';
     const modal = document.getElementById(id);
+    if (id === 'danceModal') renderDanceDeck();
+    if (id === 'arcadeModal') renderArcade();
+    if (id === 'songbookModal') renderSongbook();
     (modal?.querySelector('.modal-close') || modal)?.focus();
   }
-
   function closeModal() {
     if (!$('#modalLayer').classList.contains('open')) return;
     $('#modalLayer').classList.remove('open');
-    $('#modalLayer').setAttribute('aria-hidden','true');
+    $('#modalLayer').setAttribute('aria-hidden', 'true');
     $$('.modal').forEach(m => m.classList.remove('active'));
     document.body.style.overflow = '';
     if (lastFocused && document.contains(lastFocused) && typeof lastFocused.focus === 'function') lastFocused.focus();
     lastFocused = null;
   }
 
-  function toast(title, text) {
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.innerHTML = `<b>${escapeHTML(title)}</b><p>${escapeHTML(text)}</p>`;
-    $('#toastStack').appendChild(el);
-    setTimeout(() => { el.style.opacity='0'; el.style.transform='translateX(12px)'; }, 3600);
-    setTimeout(() => el.remove(), 4100);
-  }
-
-  function escapeHTML(str='') {
-    return String(str).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-  }
-
-  function createDust() {
-    const root = $('#dust');
-    for (let i=0;i<34;i++) {
-      const dot = document.createElement('i');
-      dot.style.left = `${Math.random()*100}%`; dot.style.top = `${Math.random()*100}%`;
-      dot.style.setProperty('--d', `${6+Math.random()*10}s`); dot.style.animationDelay = `${-Math.random()*10}s`;
-      root.appendChild(dot);
-    }
-  }
-
-  async function hwButtonAction(btn) {
-    if (!state.hardware.connected) return toast('No real body yet','Open Hardware Lab and connect the local bridge first.');
-    const a = btn.dataset.hw;
-    const commands = {
-      forward:['move',{distance:50,speed:50}], back:['move',{distance:-40,speed:45}], left:['turn',{angle:35,speed:70}], right:['turn',{angle:-35,speed:70}], tone:['tone',{frequency:740,duration:.08}]
-    };
-    const cmd = commands[a];
-    if (!cmd) return;
-    try { await hardwareAction(cmd[0], cmd[1]); toast('Body command sent', a); }
-    catch(e){ hardwareSoftFail(e); }
-  }
-
+  /* ================= event bindings ================= */
   function bindEvents() {
-    $$('[data-action]').forEach(btn => btn.addEventListener('click', () => perform(btn.dataset.action)));
-    $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
-      if (!state.awake) {
-        speak('I am asleep. The map can wait until morning.', 'sleepy');
-        toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
-        return;
-      }
-      const z = btn.dataset.zone;
-      moveTo(z, true); modify('curiosity', -2); modify('boredom', -5); speak(`You pointed at ${zoneLabel(z)}. I am choosing to interpret this as permission.`, 'curious'); addMemory(`Was directed toward ${zoneLabel(z)}.`); saveState(); renderAll();
+    $$('[data-action]').forEach(btn => btn.addEventListener('click', () => {
+      if (!ENGINE) return toast('Engine offline', 'Refresh the page — the pet brain failed to load.');
+      OP.Core.interact(btn.dataset.action);
     }));
+
+    $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
+      if (snap && !snap.awake) return toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
+      const z = btn.dataset.zone;
+      moveVisuals(z); setLed((zones[z] || zones.center).color);
+      if (ENGINE) {
+        OP.Core.applyNeeds({ curiosity: -2, boredom: -5 });
+        OP.Core.addMemory(`Was directed toward ${zoneLabel(z)}.`);
+      }
+      showThought(`You pointed at ${zoneLabel(z)}. I am choosing to interpret this as permission.`);
+      if (ENGINE) OP.Store.saveSoon();
+    }));
+
     $$('[data-modal]').forEach(btn => btn.addEventListener('click', () => openModal(btn.dataset.modal)));
     $$('[data-close-modal]').forEach(el => el.addEventListener('click', closeModal));
     $('#hardwareButton').addEventListener('click', () => openModal('hardwareModal'));
-    $('#livingToggle').addEventListener('click', () => { state.living = !state.living; saveState(); renderAll(); toast(state.living?'Living mode on':'Quiet mode on', state.living?'Ozi may initiate small interactions.':'Ozi will wait for you.'); scheduleAuto(); });
-    $('#resetDayButton').addEventListener('click', () => { state.day++; state.awake = true; modify('energy',12); modify('boredom',-10); addMemory(`Day ${state.day} began. Ozi resumed the investigation.`); saveState(); renderAll(); speak('New day. Same desk. New allegations.', 'curious'); });
-    $('#clearMemories').addEventListener('click', () => { state.memories=[]; saveState(); renderAll(); toast('Memory feed cleared','Dreams and personality were left intact.'); });
+
+    $('#livingToggle').addEventListener('click', () => {
+      if (!ENGINE) return;
+      const s = OP.Core.getState();
+      s.living = !s.living;
+      OP.Store.saveSoon();
+      renderAll();
+      toast(s.living ? 'Living mode on' : 'Quiet mode on', s.living ? 'Ozi may initiate small interactions.' : 'Ozi will wait for you.');
+    });
+
+    $('#resetDayButton').addEventListener('click', () => {
+      if (!ENGINE) return;
+      const s = OP.Core.getState();
+      s.day++;
+      s.awake = true;
+      OP.Core.applyNeeds({ energy: 12, boredom: -10 });
+      OP.Core.addMemory(`Day ${s.day} began. Ozi resumed the investigation.`);
+      renderAll();
+      Bus.emit('thought', { text: 'New day. Same desk. New allegations.' });
+    });
+
+    // runtime-guard.js provides the two-click CONFIRM arm/disarm in capture
+    // phase — by the time this fires, the user has confirmed.
+    $('#clearMemories').addEventListener('click', () => {
+      if (!ENGINE) return;
+      const s = OP.Core.getState();
+      s.memories.length = 0;
+      OP.Store.saveSoon();
+      renderAll();
+      toast('Memory feed cleared', 'Dreams and personality were left intact.');
+    });
+
     $('#connectBridge').addEventListener('click', connectBridge);
     $('#disconnectBridge').addEventListener('click', disconnectBridge);
-    $$('[data-hw]').forEach(btn => btn.addEventListener('click', () => hwButtonAction(btn)));
-    $$('[data-led]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!state.hardware.connected) return toast('No real body yet','Connect the bridge before testing LEDs.');
-      try { await hardwareAction('led',{color:btn.dataset.led}); setLed(getColor(btn.dataset.led)); }
-      catch(e){ hardwareSoftFail(e); }
+
+    $$('[data-hw]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!connected) return toast('No real body yet', 'Open Hardware Lab and connect the local bridge first.');
+      const commands = {
+        forward: ['move', { distance: 50, speed: 50 }], back: ['move', { distance: -40, speed: 45 }],
+        left: ['turn', { angle: 35, speed: 70 }], right: ['turn', { angle: -35, speed: 70 }], tone: ['tone', { frequency: 740, duration: .08 }]
+      };
+      const cmd = commands[btn.dataset.hw];
+      if (!cmd) return;
+      try { await hardwareAction(cmd[0], cmd[1]); toast('Body command sent', btn.dataset.hw); animate('bop', 500); }
+      catch (e) { hardwareSoftFail(e); }
     }));
+
+    $$('[data-led]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!connected) return toast('No real body yet', 'Connect the bridge before testing LEDs.');
+      try { await hardwareAction('led', { color: btn.dataset.led }); setLed(getColor(btn.dataset.led)); }
+      catch (e) { hardwareSoftFail(e); }
+    }));
+
     $('#readColorButton').addEventListener('click', async () => {
-      if (!state.hardware.connected) return toast('No real body yet','Connect the bridge first.');
-      try { const r = await hardwareAction('read_color'); $('#surfaceReadout').textContent = r.surface || 'unclassified'; toast('Surface read', r.surface || 'unclassified'); }
-      catch(e){ hardwareSoftFail(e); }
+      if (!ENGINE) return;
+      if (!connected) return toast('No real body yet', 'Connect the bridge first.');
+      const r = await OP.Safety.readSurface();
+      $('#surfaceReadout').textContent = r.surface || 'unclassified';
+      if (r.error) hardwareSoftFail(new Error(r.error));
+      else toast('Surface read', r.surface || 'unclassified');
     });
-    $('#generateDream').addEventListener('click', generateDream);
+
+    $('#generateDream').addEventListener('click', () => {
+      if (!ENGINE) return;
+      const d = OP.Core.generateDreamFromMemories();
+      if (d) { renderAll(); toast('Dream archived', d.title); }
+      else toast('Nothing to dream about yet', 'Ozi needs a few memories first. Go make some.');
+    });
+
+    // floor adventure
+    $('#oziModeDesk').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.setMode('desk'); renderFloorPanel(); renderFooter(); });
+    $('#oziModeFloor').addEventListener('click', () => {
+      if (!ENGINE) return;
+      OP.Safety.setMode('floor');
+      if ($('#oziFloorConfirm').checked) OP.Safety.confirmFloor();
+      renderFloorPanel(); renderFooter();
+    });
+    $('#oziFloorConfirm').addEventListener('change', ev => {
+      if (!ENGINE) return;
+      if (ev.target.checked) OP.Safety.confirmFloor(); else OP.Safety.revokeFloor();
+      renderFloorPanel();
+    });
+    $('#oziCamPreview').addEventListener('click', startPreview);
+    bindCalibrate($('#oziCamVideo'));
+    bindCalibrate($('#oziCamCanvas'));
+    $('#oziFollowStart').addEventListener('click', () => startFollowMode('follow'));
+    $('#oziComeHere').addEventListener('click', () => startFollowMode('come'));
+    $('#oziHandMode').addEventListener('click', () => startFollowMode('hand'));
+
+    $('#oziEStop').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.estop('manual STOP pressed'); });
+    $('#oziEstopReset').addEventListener('click', () => {
+      OP.Safety.reset();
+      $('#oziEstopBanner').hidden = true;
+      toast('Safety reset', 'Reconnect the body via Hardware Lab when ready.');
+    });
+
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') { closeModal(); return; }
       if (e.key !== 'Tab' || !$('#modalLayer').classList.contains('open')) return;
-      const focusables = $$('.modal.active button, .modal.active input').filter(el => el.offsetParent !== null);
+      const focusables = $$('.modal.active button, .modal.active input').filter(el => el.offsetParent !== null && !el.disabled);
       if (!focusables.length) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     });
-    window.addEventListener('beforeunload', saveState);
-    window.addEventListener('pagehide', saveState);
+
+    window.addEventListener('beforeunload', () => { ENGINE && OP.Store.saveNow(); stopPreview(); });
+    window.addEventListener('pagehide', () => { ENGINE && OP.Store.saveNow(); stopPreview(); });
   }
 
-  function getColor(name) {
-    return ({mint:'#74ffc8',violet:'#b780ff',amber:'#ffd36c',red:'#ff667c',blue:'#7ddcff'})[name] || '#74ffc8';
+  /* ================= bus wiring ================= */
+  function wireBus() {
+    Bus.on('thought', d => d?.text && showThought(d.text));
+    Bus.on('mood', () => renderAll());
+    Bus.on('anim', d => d?.name && animate(d.name, d.ms || 900));
+    Bus.on('led', d => d?.color && setLed(d.color));
+    Bus.on('zone', d => d?.zone && moveVisuals(d.zone));
+    Bus.on('memory', () => renderAll());
+    Bus.on('discovery', d => d && toast(`DISCOVERY — ${d.label}`, d.text || ''));
+    Bus.on('request', r => r && showRequestCard(r));
+    Bus.on('request-done', hideRequestCard);
+    Bus.on('toast', t => t && toast(t.title || '', t.text || ''));
+    Bus.on('song', d => { markHeard(d?.name); if ($('#songList')?.children.length) renderSongbook(); });
+    Bus.on('dance', () => renderAll());
+    Bus.on('game', p => renderGamePhase(p));
+    Bus.on('estate', d => {
+      setConnectedUI(d?.connected);
+      $('#oziEStop').hidden = !d?.connected;
+      if (d?.connected) $('#connectionOrb')?.classList.add('connected');
+      renderFooter();
+    });
+    Bus.on('mode', () => { renderFloorPanel(); renderFooter(); });
+    Bus.on('estop', onEstop);
+    Bus.on('follow', d => {
+      const st = d?.state;
+      const detail = d?.detail ? ` (${d.detail})` : '';
+      if (st === 'tracking') $('#oziFollowStatus').textContent = `TRACKING${detail}`;
+      else if (st === 'lost') $('#oziFollowStatus').textContent = `TARGET LOST${detail} — pulses stopped, waiting…`;
+      else if (st === 'starting') $('#oziFollowStatus').textContent = 'STARTING CAMERA…';
+      else if (st === 'stopped') { $('#oziFollowStatus').textContent = `STOPPED${detail}`; renderFloorPanel(); }
+      else if (st === 'error') { $('#oziFollowStatus').textContent = `ERROR${detail}`; renderFloorPanel(); }
+    });
+    Bus.on('tick-needs', () => renderAll());
+    Bus.on('state-changed', () => renderAll());
+    Bus.on('dream', () => renderAll());
   }
 
-  createDust();
-  bindEvents();
-  moveTo(state.zone || 'nest');
-  renderAll();
-  scheduleAuto();
-  setTimeout(() => { animate('bop'); speak(state.awake ? 'You came back. Good. I had concerns.' : '...zzzt... keyboard mountain...'); }, 700);
+  /* ================= dust + boot ================= */
+  function createDust() {
+    const root = $('#dust');
+    for (let i = 0; i < 34; i++) {
+      const dot = document.createElement('i');
+      dot.style.left = `${Math.random() * 100}%`; dot.style.top = `${Math.random() * 100}%`;
+      dot.style.setProperty('--d', `${6 + Math.random() * 10}s`); dot.style.animationDelay = `${-Math.random() * 10}s`;
+      root.appendChild(dot);
+    }
+  }
+
+  function boot() {
+    createDust();
+    bindEvents();
+    if (!ENGINE) {
+      toast('Engine failed to load', 'The pet modules did not start. Check the console and refresh.');
+      return;
+    }
+    OP.Core.init();
+    OP.Core.wireDeps({ Perform: OP.Perform, Games: OP.Games });
+    OP.Safety.setKeyProvider(() => ($('#bridgeKey').value || '').trim());
+    OP.Core.startLoops();
+    wireBus();
+    snap = OP.Core.snapshot();
+    moveVisuals(snap.zone || 'nest');
+    renderAll();
+    renderDanceDeck();
+    renderSongbook();
+    renderArcade();
+    setTimeout(() => {
+      animate('bop');
+      if (!snap.awake) showThought('...zzzt... keyboard mountain...');
+      else showThought('You came back. Good. I had concerns. Also: I can dance now. Just saying.');
+    }, 700);
+  }
+
+  boot();
 })();

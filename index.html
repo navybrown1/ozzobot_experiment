@@ -216,11 +216,14 @@
         </section>
 
         <section class="doors-card">
-          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>04</b></div>
+          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>07</b></div>
           <button class="door-button" data-modal="howtoModal"><span><small>01</small> HOW TO PLAY</span><b>OPEN</b></button>
           <button class="door-button" data-modal="dnaModal"><span><small>02</small> PERSONALITY DNA</span><b>OPEN</b></button>
           <button class="door-button" data-modal="dreamModal"><span><small>03</small> DREAM VAULT</span><b>OPEN</b></button>
           <button class="door-button" data-modal="hardwareModal"><span><small>04</small> HARDWARE LAB</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="danceModal"><span><small>05</small> DANCE DECK</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="arcadeModal"><span><small>06</small> ARCADE</span><b>OPEN</b></button>
+          <button class="door-button" data-modal="songbookModal"><span><small>07</small> SONGBOOK</span><b>OPEN</b></button>
         </section>
       </aside>
     </main>
@@ -294,6 +297,27 @@
           <button class="wide-test" id="readColorButton">READ EVO SURFACE COLOR</button>
         </div>
       </div>
+      <fieldset class="floor-panel">
+        <legend class="floor-legend">FLOOR ADVENTURE</legend>
+        <p class="modal-lead" style="margin-top:0">Desk mode keeps every wheel locked. Floor mode unlocks tiny supervised moves — only after you confirm the robot is somewhere safe.</p>
+        <div class="mode-toggle" role="group" aria-label="Surface mode">
+          <button class="mode-chip active" id="oziModeDesk" type="button">DESK</button>
+          <button class="mode-chip" id="oziModeFloor" type="button">FLOOR</button>
+        </div>
+        <label class="confirm-row"><input type="checkbox" id="oziFloorConfirm" /> The robot is on a clear floor area.</label>
+        <div class="cam-frame">
+          <video id="oziCamVideo" playsinline muted></video>
+          <canvas id="oziCamCanvas" width="96" height="72"></canvas>
+          <span class="cam-hint">CALIBRATE // tap the camera preview (or the pixel canvas) on the color card you want Ozi to chase, then start a mode below.</span>
+        </div>
+        <div class="button-row">
+          <button class="modal-secondary" id="oziCamPreview" type="button">PREVIEW CAMERA</button>
+          <button class="modal-primary follow-btn" id="oziFollowStart" type="button">FOLLOW ME <small>EXPERIMENTAL // FLOOR ONLY</small></button>
+          <button class="modal-secondary follow-btn" id="oziComeHere" type="button">COME HERE <small>EXPERIMENTAL // FLOOR ONLY</small></button>
+          <button class="modal-secondary follow-btn" id="oziHandMode" type="button">FOLLOW MY HAND <small>EXPERIMENTAL // FLOOR ONLY</small></button>
+        </div>
+        <p class="follow-status" id="oziFollowStatus">idle // preview the camera, calibrate a color card, confirm the floor, then start.</p>
+      </fieldset>
       <div class="warning-note"><b>HOW IT CONNECTS.</b> The bridge uses Ozobot's official Python packages with native Bluetooth LE (bleak/CoreBluetooth). Keep the official Ozobot Editor closed while connected — it holds the same Bluetooth link. Movement stays clamped (±120 mm, ±180°) and requires a fresh click or key press.</div>
     </section>
 
@@ -315,10 +339,49 @@
       <div class="dream-list" id="dreamList"></div>
       <button class="modal-primary" id="generateDream">GENERATE TONIGHT'S DREAM</button>
     </section>
+
+    <section class="modal" id="danceModal" aria-modal="true" role="dialog" aria-label="Dance Deck">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">DANCE DECK</div>
+      <h2>CHOREOGRAPHY, VOLUNTARILY NONSENSE.</h2>
+      <p class="modal-lead">Pick a routine and Ozi performs it — lights, tones and questionable confidence. Secret routines stay hidden until Ozi invents them.</p>
+      <div class="deck-list" id="danceDeck"></div>
+    </section>
+
+    <section class="modal" id="arcadeModal" aria-modal="true" role="dialog" aria-label="Arcade">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">ARCADE // MISSION DECK</div>
+      <h2>SEVEN TINY MISSIONS.</h2>
+      <p class="modal-lead">Every mission is safety-clamped. FLOOR-stamped missions move best on an open floor; on the desk they degrade to lights, tones and turns.</p>
+      <div class="mission-grid" id="missionGrid"></div>
+      <div class="game-stage" id="gameStage"><p class="stage-line">PICK A MISSION ABOVE // results appear here.</p></div>
+    </section>
+
+    <section class="modal" id="songbookModal" aria-modal="true" role="dialog" aria-label="Songbook">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="modal-kicker">SONGBOOK // ORIGINALS ONLY</div>
+      <h2>TINY MELODIES, ZERO ROYALTIES.</h2>
+      <p class="modal-lead">Every song is an original composed for this creature. Unheard tracks show as ??? until Ozi performs them at least once.</p>
+      <div class="songbook" id="songList"></div>
+    </section>
   </div>
+
+  <div class="request-card" id="oziRequestCard" role="status" aria-live="polite" hidden></div>
+
+  <div class="estop-banner" id="oziEstopBanner" hidden>
+    <b>EMERGENCY STOP</b>
+    <span id="oziEstopReason"></span>
+    <button id="oziEstopReset" type="button">RESET SAFETY</button>
+  </div>
+
+  <button class="estop" id="oziEStop" type="button" hidden>STOP</button>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <script src="./runtime-guard.js"></script>
+  <script src="./pet/core.js"></script>
+  <script src="./pet/perform.js"></script>
+  <script src="./pet/games.js"></script>
+  <script src="./pet/follow.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

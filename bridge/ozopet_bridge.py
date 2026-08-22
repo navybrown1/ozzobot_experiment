@@ -18,7 +18,7 @@ import os
 import secrets
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 HOST = "127.0.0.1"
@@ -63,6 +63,7 @@ class RobotController:
         self.sdk_error: str | None = None
         self.surface = "unclassified"
         self._imports: dict[str, Any] = {}
+        self._abort = False
 
         if not self.simulate:
             try:
@@ -208,7 +209,114 @@ class RobotController:
         self.led("mint")
         return {"ok": True, "action": "dance"}
 
+    SEQUENCE_KEYS = ("led", "tone", "move", "turn", "wait")
+    NESTED_KEYS = {
+        "move": ("distance", "speed"),
+        "turn": ("angle", "speed"),
+        "tone": ("frequency", "duration"),
+    }
+
+    def _validate_sequence_step(self, index: int, step: Any) -> None:
+        if not isinstance(step, dict):
+            raise ValueError(f"step {index} must be an object")
+        unknown = sorted(str(key) for key in step if key not in self.SEQUENCE_KEYS)
+        if unknown:
+            raise ValueError(f"step {index} has unknown keys: {', '.join(unknown)}")
+        if not step:
+            raise ValueError(f"step {index} must set at least one of: led, tone, move, turn, wait")
+        if "led" in step and not isinstance(step["led"], str):
+            raise ValueError(f"step {index} 'led' must be a string")
+        for key in ("move", "turn", "tone"):
+            if key not in step:
+                continue
+            if not isinstance(step[key], dict):
+                raise ValueError(f"step {index} '{key}' must be an object")
+            nested_unknown = sorted(str(k) for k in step[key] if k not in self.NESTED_KEYS[key])
+            if nested_unknown:
+                raise ValueError(f"step {index} '{key}' has unknown keys: {', '.join(nested_unknown)}")
+        if "move" in step:
+            require_finite(step["move"].get("distance", 40), "distance")
+            require_finite(step["move"].get("speed", 50), "speed")
+        if "turn" in step:
+            require_finite(step["turn"].get("angle", 35), "angle")
+            require_finite(step["turn"].get("speed", 70), "speed")
+        if "tone" in step:
+            require_finite(step["tone"].get("frequency", 660), "frequency")
+            require_finite(step["tone"].get("duration", 0.08), "duration")
+        if "wait" in step:
+            require_finite(step["wait"], "wait")
+
+    def sequence(self, steps: Any) -> dict[str, Any]:
+        if not isinstance(steps, list):
+            raise ValueError("'steps' must be a list")
+        if len(steps) > 16:
+            raise ValueError("'steps' must contain at most 16 steps")
+        plan: list[tuple[int, dict[str, Any]]] = []
+        for index, step in enumerate(steps):
+            self._validate_sequence_step(index, step)
+            plan.append((index, step))
+
+        self._abort = False
+        started = time.monotonic()
+        budget = 8.0
+        results: list[dict[str, Any]] = []
+        truncated = False
+        for index, step in plan:
+            if self._abort or time.monotonic() - started >= budget:
+                truncated = True
+                break
+            actions: list[dict[str, Any]] = []
+            if "led" in step:
+                actions.append(self.led(str(step["led"])))
+            if "tone" in step:
+                actions.append(self.tone(step["tone"].get("frequency", 660), step["tone"].get("duration", 0.08)))
+            if "move" in step:
+                actions.append(self.move(step["move"].get("distance", 40), step["move"].get("speed", 50)))
+            if "turn" in step:
+                actions.append(self.turn(step["turn"].get("angle", 35), step["turn"].get("speed", 70)))
+            if "wait" in step:
+                seconds = clamp(require_finite(step["wait"], "wait"), 0.0, 1.5)
+                slept = max(0.0, min(seconds, budget - (time.monotonic() - started)))
+                if slept > 0:
+                    time.sleep(slept)
+                actions.append({"ok": True, "action": "wait", "seconds": slept})
+            results.append({"index": index, "ok": True, "actions": actions})
+        return {
+            "ok": True,
+            "action": "sequence",
+            "results": results,
+            "truncated": truncated,
+            "steps_executed": len(results),
+        }
+
+    def stop(self) -> dict[str, Any]:
+        self._abort = True
+        if self.robot is not None:
+            try:
+                self.robot.set_velocity(0, 0, 0)
+            except Exception:
+                pass
+        return {"ok": True, "action": "stop"}
+
+    def proximity(self) -> dict[str, Any]:
+        if self.simulate or not self.connected or self.robot is None:
+            return {"ok": True, "available": False}
+        left: bool | None = None
+        right: bool | None = None
+        try:
+            left = bool(self.robot.data.obstacle_left_front.read())
+        except Exception:
+            left = None
+        try:
+            right = bool(self.robot.data.obstacle_right_front.read())
+        except Exception:
+            right = None
+        if left is None or right is None:
+            return {"ok": True, "available": False}
+        return {"ok": True, "available": True, "front": {"left": left, "right": right}}
+
     def action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._abort = False
         action = str(payload.get("action", ""))
         if action == "move":
             return self.move(payload.get("distance", 40), payload.get("speed", 50))
@@ -228,7 +336,7 @@ class RobotController:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "OzoPetBridge/0.2"
+    server_version = "OzoPetBridge/0.3"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stdout.write("[bridge] " + (fmt % args) + "\n")
@@ -293,11 +401,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path != "/health":
-            return self._json(404, {"ok": False, "error": "not found"})
-        if not self._authorized():
-            return self._json(401, {"ok": False, "error": "invalid bridge key"})
-        self._json(200, self.controller.status())
+        if self.path == "/health":
+            if not self._authorized():
+                return self._json(401, {"ok": False, "error": "invalid bridge key"})
+            return self._json(200, self.controller.status())
+        if self.path == "/proximity":
+            if not self._authorized():
+                return self._json(401, {"ok": False, "error": "invalid bridge key"})
+            return self._json(200, self.controller.proximity())
+        return self._json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._authorized():
@@ -310,6 +422,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 result = self.controller.disconnect()
             elif self.path == "/action":
                 result = self.controller.action(payload)
+            elif self.path == "/sequence":
+                result = self.controller.sequence(payload.get("steps"))
+            elif self.path == "/stop":
+                result = self.controller.stop()
             else:
                 return self._json(404, {"ok": False, "error": "not found"})
             self._json(200, result)
@@ -319,7 +435,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._json(500, {"ok": False, "error": f"bridge failure: {exc}"})
 
 
-class BridgeServer(HTTPServer):
+class BridgeServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int], controller: RobotController, bridge_key: str):

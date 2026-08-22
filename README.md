@@ -2,6 +2,27 @@
 
 OzoPet is a persistent digital pet built around the physical personality of an Ozobot Evo. The hosted app is deliberately useful without hardware, then upgrades into a real-robot experiment when a local Evo bridge is connected.
 
+## What Ozi can now do
+
+Ozi runs on a real behavior engine — it is not a row of decorative buttons.
+
+- **12 internal drives** (energy, hunger, affection, social, curiosity, boredom, confidence, trust, mischief, sleepiness, playfulness, stress) that drift in real time and shape everything Ozi does
+- **Initiates interaction**: asks for attention, play, snacks, dances, exploration or sing-alongs via request cards with PLAY / LATER choices — with cooldowns so it never nags
+- **Self-directed life**: wanders zones, hums original melodies, does micro-dances, scans suspiciously, drifts to the nest when tired, throws zoomies
+- **9 named dance routines** built from choreography primitives (The Wiggle, Happy Spin, Robot Salsa, Moonwalk, Dramatic Entrance, Shy Dance, Victory Lap, Zoomies — plus one SECRET routine that unlocks after five dances)
+- **10 original songs** (greeting, lullaby, victory arpeggio, feeding anthem, mischief noises, wandering hum…) performed with synchronized LED patterns; unheard tracks appear as `???` in the Songbook until Ozi performs them
+- **Body language**: 13 physical expressions (curious, excited, nervous, angry, sad, happy, sleepy, suspicious, refusal, startle…) that work in simulation and on the real robot
+- **7 arcade missions**: Simon Says, Red Light Wiggle, Dance Party, Color Hunt (reads real surface colors), Mystery Box, Guard Duty (uses real IR proximity), Hide & Seek
+- **Meaningful sleep**: bedtime journey to the nest, soft-blue lullaby, dreams composed from the day's actual memories, mentioned at wake-up
+- **Memory that matters**: preferences learned per activity/zone/game/dance/song, habits (morning greetings, evening sleepy nudges, dance-after-snack), discoveries instead of trophies (First Song, Trusted Human, Night Owl, Purple Obsession…)
+- **Personality evolution**: DNA traits drift slowly from how you actually treat Ozi, changing planner weights — two OzoPets behave differently over time
+
+## Desk mode vs Floor Adventure mode
+
+**DESK MODE (default).** The browser stays the brain and every wheel stays locked. Autonomous behavior is limited to LEDs, tones, tiny stationary turns (≤20°) and sensor reactions. Translation commands are stripped client-side *and* clamped server-side. Living Mode can never drive the robot off your desk.
+
+**FLOOR ADVENTURE MODE (explicit only).** Inside Hardware Lab: switch to FLOOR, tick *"The robot is on a clear floor area."*, and supervised autonomy arms — short clamped moves (≤50 mm/step, 45°/step, 7 s budget), Follow Me / Come Here / Follow My Hand using an honest webcam color-card tracker (the Evo has no camera of its own), with IR proximity obstacle guards. A huge red STOP button is always visible while a body is attached; e-stop fires automatically on bridge loss, camera loss or tab-hidden, cutting motion and disconnecting.
+
 ## What is already in this first build
 
 - Persistent pet state in browser localStorage
