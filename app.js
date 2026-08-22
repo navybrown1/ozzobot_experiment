@@ -674,10 +674,20 @@
     $('#oziHandMode').addEventListener('click', () => startFollowMode('hand'));
 
     $('#oziEStop').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.estop('manual STOP pressed'); });
-    $('#oziEstopReset').addEventListener('click', () => {
+    $('#oziEstopReset').addEventListener('click', async () => {
       OP.Safety.reset();
       $('#oziEstopBanner').hidden = true;
-      toast('Safety reset', 'Reconnect the body via Hardware Lab when ready.');
+      const hasKey = !!$('#bridgeKey').value.trim();
+      if (hasKey && !connected) {
+        toast('Waking Ozi up…', 'Starting the body again.');
+        for (let i = 0; i < 3 && !connected && !OP.Safety.state().estopped; i++) {
+          try { await connectBridge(); } catch {}
+          if (!connected) await new Promise(r => setTimeout(r, 3500));
+        }
+        if (connected) $('#oziEstopBanner').hidden = true;
+      } else {
+        toast('Ozi is ready!', 'Press any button to play.');
+      }
     });
 
     document.addEventListener('keydown', e => {

@@ -19,6 +19,7 @@ import secrets
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -83,15 +84,62 @@ class RobotController:
             except Exception as exc:
                 self.sdk_error = f"Ozobot SDK import failed: {exc}"
 
+    # Per-operation ceilings. A BLE scan that never returns must not wedge the
+    # single worker queue forever (observed: 42 queued connects, zero completions).
+    OP_TIMEOUTS = {
+        "_connect_impl": 25.0,
+        "_disconnect_impl": 10.0,
+        "_halt_motion": 6.0,
+    }
+    DEFAULT_TIMEOUT = 12.0
+
     def _submit(self, fn, *args) -> Any:
-        """Run a controller operation on the single hardware worker."""
-        import threading, traceback
-        print(f"[hw] submit {getattr(fn, '__name__', fn)} on worker", flush=True)
+        """Run a controller operation on the single hardware worker.
+
+        Bounded wait + poisoned-worker replacement: if the SDK hangs past its
+        ceiling, return an error to the caller and swap in a fresh executor so
+        later jobs are not stuck behind the hung thread.
+        """
+        import threading, time, traceback
+        name = getattr(fn, "__name__", str(fn))
+        timeout = self.OP_TIMEOUTS.get(name, self.DEFAULT_TIMEOUT)
+        print(f"[hw] submit {name} on worker (timeout={timeout}s)", flush=True)
+        future = self._hw.submit(fn, *args)
+        t0 = time.monotonic()
         try:
-            return self._hw.submit(fn, *args).result()
+            result = future.result(timeout=timeout)
+            print(f"[hw] done {name} in {time.monotonic() - t0:.2f}s", flush=True)
+            return result
+        except FuturesTimeoutError:
+            print(f"[hw] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
+            self._replace_worker()
+            if self._escalate():
+                import os
+                print("[hw] repeated timeouts — exiting so supervisor restarts a clean "
+                      "bridge (only a process exit reliably releases the Bluetooth link)", flush=True)
+                os._exit(75)
+            raise RuntimeError(
+                f"Hardware operation '{name}' timed out. The Bluetooth link was stuck; "
+                "the bridge recovered itself — try connecting again."
+            ) from None
         except Exception as exc:
-            print(f"[hw] FAILED {getattr(fn, '__name__', fn)}:\n{traceback.format_exc()}", flush=True)
+            print(f"[hw] FAILED {name}:\n{traceback.format_exc()}", flush=True)
             raise
+
+    def _replace_worker(self) -> None:
+        """Discard the executor whose thread is stuck inside SDK code."""
+        old = self._hw
+        self._hw = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ozo-hw")
+        old.shutdown(wait=False)
+
+    def _escalate(self) -> bool:
+        """True when timeouts repeat: the OS-level BLE link is orphaned and only
+        a process exit releases it. The supervisor restarts us automatically."""
+        import time as _time
+        now = _time.monotonic()
+        self._timeout_strikes = [t for t in getattr(self, "_timeout_strikes", []) if now - t < 120]
+        self._timeout_strikes.append(now)
+        return len(self._timeout_strikes) >= 2
 
     @property
     def mode(self) -> str:
