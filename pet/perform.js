@@ -436,7 +436,9 @@
     const firstLed = (steps.find(s => s.led) || {}).led;
     if (firstLed) emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    playNotes(e.melody);
+    // Same rule as dance()/song(): when the robot body is attached its own
+    // tone steps are the music — a simultaneous browser melody would double it.
+    if (!(Safety && Safety.state && Safety.state().connected)) playNotes(e.melody);
     const res = await execViaSafety(steps, 'express:' + name);
     return { ok: !res.error, simulated: !!res.simulated, name, error: res.error || null };
   }

@@ -365,7 +365,7 @@
       const video = $('#oziCamVideo');
       video.srcObject = previewStream;
       await video.play().catch(() => {});
-      $('#oziFollowStatus').textContent = 'preview live // tap the video on the color card you want Ozi to chase.';
+      $('#oziFollowStatus').textContent = 'Camera is on! Hold up your colored paper and tap it in the picture.';
     } catch (err) {
       toast('Camera refused', err?.name === 'NotAllowedError' ? 'Permission denied. Allow camera access to use Follow modes.' : 'No usable camera found.');
     }
