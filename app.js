@@ -259,11 +259,11 @@
     if (snap) { renderAll(); } else { $('#connectionOrb')?.classList.toggle('connected', connected); }
   }
 
-  async function hardwareRequest(path, body = null) {
+  async function hardwareRequest(path, body = null, timeoutMs = 6000) {
     const key = ($('#bridgeKey').value || '').trim();
     const headers = { 'Content-Type': 'application/json', 'X-OzoPet-Key': key };
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 6000);
+    const timeout = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(`http://127.0.0.1:8787${path}`, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal, mode: 'cors' });
       const data = await res.json().catch(() => ({}));
@@ -272,16 +272,67 @@
     } finally { clearTimeout(timeout); }
   }
 
+  /* ---- single-driver guard (2026-08-22 council motion C8):
+   * two tabs both driving one robot caused double-connects and interleaved
+   * commands. The tab that owns leadership (smallest live id) drives; the
+   * other becomes a spectator and is told why. */
+  const TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const driveChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ozo-pet-drive') : null;
+  const driveBeats = new Map();
+  let spectatorWarned = false;
+  function amSpectator() {
+    const now = Date.now();
+    for (const [id, ts] of driveBeats) if (now - ts > 4000) driveBeats.delete(id);
+    if (!driveChannel || driveBeats.size === 0) return false;
+    let leader = TAB_ID;
+    for (const id of driveBeats.keys()) if (id < leader) leader = id;
+    return leader !== TAB_ID;
+  }
+  function updateDriveGuard() {
+    const spectating = amSpectator();
+    let banner = document.getElementById('driveGuard');
+    if (spectating && !banner) {
+      banner = document.createElement('p');
+      banner.id = 'driveGuard';
+      banner.style.cssText = 'margin-top:10px;padding:10px 12px;border:2px solid #e2543f;background:#fff4ef;font:600 13px/1.45 ui-monospace,monospace;color:#7c2d12;border-radius:6px';
+      banner.textContent = 'OZI IS ALREADY PLAYING IN ANOTHER WINDOW. Close that tab to take over here.';
+      document.getElementById('connectionDetail')?.after(banner);
+    }
+    if (!spectating && banner) banner.remove();
+    if (spectating && !spectatorWarned) {
+      spectatorWarned = true;
+      toast('Two windows detected', 'Ozi is being driven in another tab. Close it to take over.');
+    }
+    if (!spectating) spectatorWarned = false;
+  }
+  if (driveChannel) {
+    driveChannel.onmessage = (e) => {
+      const m = e.data || {};
+      if (m.id === TAB_ID) return;
+      if (m.type === 'hb') driveBeats.set(m.id, Date.now());
+      if (m.type === 'bye') driveBeats.delete(m.id);
+      updateDriveGuard();
+    };
+    setInterval(() => {
+      driveBeats.set(TAB_ID, Date.now());
+      driveChannel.postMessage({ type: 'hb', id: TAB_ID });
+      updateDriveGuard();
+    }, 1200);
+    addEventListener('pagehide', () => { try { driveChannel.postMessage({ type: 'bye', id: TAB_ID }); } catch {} });
+  }
+
   let connectingBridge = false;
   async function connectBridge() {
     if (connectingBridge) return;
+    if (amSpectator()) return toast('Another window is driving', 'Close the other OziPet tab first — one robot, one driver.');
     const key = $('#bridgeKey').value.trim();
     if (!key) return toast('Bridge key missing', 'Run bridge/ozopet_bridge.py and paste the key it prints.');
     connectingBridge = true;
     try {
       const health = await hardwareRequest('/health');
       if (!health.ok) throw new Error('bridge health check failed');
-      const result = await hardwareRequest('/connect', {});
+      // Real BLE connects can take up to ~20s (observed); give the bridge room.
+      const result = await hardwareRequest('/connect', {}, 30000);
       setConnectedUI(!!result.connected);
       $('#surfaceReadout').textContent = result.surface || 'waiting';
       toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
@@ -297,7 +348,7 @@
   }
 
   async function disconnectBridge() {
-    try { if (connected) await hardwareRequest('/disconnect', {}); } catch {}
+    try { if (connected) await hardwareRequest('/disconnect', {}, 12000); } catch {}
     setConnectedUI(false);
     $('#oziEStop').hidden = true;
     toast('Hardware detached', 'Ozi is back in simulation-only mode.');
@@ -305,7 +356,7 @@
 
   async function hardwareAction(action, payload = {}) {
     if (!connected) throw new Error('hardware not connected');
-    return hardwareRequest('/action', { action, ...payload });
+    return hardwareRequest('/action', { action, ...payload }, 20000);
   }
 
   function hardwareSoftFail(err) {

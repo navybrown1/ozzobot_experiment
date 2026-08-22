@@ -282,7 +282,7 @@
 
     safety.executing = true; safety.execHasMotor = out.some(s => s.move || s.turn);
     try {
-      const res = await bridgeFetch('/sequence', { body: { steps: out, source } }, 10000);
+      const res = await bridgeFetch('/sequence', { body: { steps: out, source } }, 20000);
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         // A 4xx means the bridge ANSWERED — the radio link is alive. Only

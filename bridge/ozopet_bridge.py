@@ -12,6 +12,7 @@ Python 3.13+ is required by ozobot-evo 0.3.x.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import math
 import os
@@ -56,12 +57,121 @@ def require_finite(value: Any, name: str) -> float:
     return number
 
 
+class _BleLoop:
+    """ONE permanent asyncio event loop on ONE daemon thread.
+
+    Bleak requires that every operation (connect, GATT I/O, notifications)
+    runs on the same always-running loop that created the client
+    (https://bleak.readthedocs.io/en/latest/troubleshooting.html). The Ozobot
+    SDK's sync wrapper violates this by sharing one asyncio.Runner across
+    threads, which is exactly what produced "This event loop is already
+    running" errors and silent hangs in this bridge (2026-08-22 council).
+
+    All SDK access now goes through call(): schedule a coroutine onto this
+    loop via run_coroutine_threadsafe and block the calling (HTTP worker)
+    thread for at most `timeout` seconds. On timeout the TASK is cancelled —
+    the loop itself stays healthy, so no thread ever gets held hostage by SDK
+    internals again.
+    """
+
+    def __init__(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self.loop.run_forever, name="ozo-ble", daemon=True)
+        self.thread.start()
+
+    def call(self, coro, timeout: float):
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        try:
+            return future.result(timeout)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(f"BLE operation exceeded {timeout}s ceiling and was cancelled") from None
+
+
+# ---------------------------------------------------------------------------
+# Test-only fake async robot (OZI_FAKE_BLE=1). Lets the QA suites exercise the
+# REAL hardware plumbing (owned loop, timeouts, cancellation, auto-resurrect)
+# without a radio. Hooks: OZI_FAKE_HANG_AT_OP=k makes op k hang until cancelled;
+# OZI_FAKE_DROP_AT_OP=k makes op k raise a bleak-shaped "Not connected".
+class _FakeBleakError(Exception):
+    pass
+
+
+_FakeBleakError.__module__ = "bleak.exception"
+_FakeBleakError.__qualname__ = "BleakError"
+
+
+class _FakeSample:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
+
+class _FakeRegion:
+    def __init__(self, value: Any = False) -> None:
+        self._value = value
+
+    async def read(self) -> _FakeSample:
+        await asyncio.sleep(0.005)
+        return _FakeSample(self._value)
+
+
+class _FakeData:
+    def __init__(self) -> None:
+        self.obstacle_left_front = _FakeRegion(False)
+        self.obstacle_right_front = _FakeRegion(False)
+        self.surface_color = _FakeRegion("UNKNOWN")
+
+
+class _FakeEvo:
+    def __init__(self, hang_at: int = 0, drop_at: int = 0) -> None:
+        self.data = _FakeData()
+        self._hang_at = hang_at
+        self._drop_at = drop_at
+        self._ops = 0
+
+    async def _hook(self) -> None:
+        self._ops += 1
+        if self._hang_at and self._ops == self._hang_at:
+            await asyncio.sleep(45)
+        if self._drop_at and self._ops == self._drop_at:
+            raise _FakeBleakError("Not connected")
+        await asyncio.sleep(0.02)
+
+    async def move(self, distance_mm: float, speed_mmps: float) -> None:
+        await self._hook()
+
+    async def rotate(self, angle_deg: float, angular_speed_degps: float) -> None:
+        await self._hook()
+
+    async def set_velocity(self, linear_mmps: float, angular_degps: float, duration_s: float) -> None:
+        await asyncio.sleep(0.01)
+
+    async def play_tone(self, frequency_hz: int, duration_s: float) -> None:
+        await self._hook()
+
+    async def set_led(self, mask: Any, color: Any) -> None:
+        await self._hook()
+
+
+class _FakeLEDMask:
+    ALL_ROBOT = "all"
+
+
+def _fake_raw_color(r: float, g: float, b: float) -> tuple[float, float, float]:
+    return (r, g, b)
+
+
 class RobotController:
     def __init__(self, simulate: bool = False, robot_name: str = "OzoEvo-*") -> None:
         self.simulate = simulate
         self.robot_name = robot_name
         self.connected = False
         self.robot = None
+        self.evo = None
+        self._handle = None
         self._ctx = None
         self.sdk_error: str | None = None
         self.surface = "unclassified"
@@ -70,23 +180,31 @@ class RobotController:
         self._recovery_lock = threading.Lock()
         self._timeout_strikes: list[float] = []
         self._lifetime_timeouts = 0
-        # The BLE SDK is not thread-safe: every hardware operation must run on
-        # ONE worker thread (the sync wrapper owns an asyncio loop per call).
-        # ThreadingHTTPServer handlers submit work here and wait for it.
+        # Serialization queue: hardware ops run one-at-a-time on this worker.
+        # Unlike before, a hung SDK call can no longer wedge this thread —
+        # _BleLoop cancels the task at its inner ceiling (2026-08-22 council).
         self._hw = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ozo-hw")
+        # ONE permanent asyncio loop owning all BLE work (bleak requirement).
+        self._ble = _BleLoop()
+        self.fake_ble = (not simulate) and os.environ.get("OZI_FAKE_BLE", "") == "1"
+        self._fake_hang_at = int(os.environ.get("OZI_FAKE_HANG_AT_OP", "0") or 0)
+        self._fake_drop_at = int(os.environ.get("OZI_FAKE_DROP_AT_OP", "0") or 0)
 
         if not self.simulate:
-            try:
-                from ozobot.evo import SyncEvoHandle  # type: ignore
-                from ozobot.linefollower import LEDMask, RawColor  # type: ignore
+            if self.fake_ble:
+                self._imports = {"LEDMask": _FakeLEDMask, "RawColor": _fake_raw_color}
+            else:
+                try:
+                    from ozobot.evo import EvoHandle  # type: ignore
+                    from ozobot.linefollower import LEDMask, RawColor  # type: ignore
 
-                self._imports = {
-                    "SyncEvoHandle": SyncEvoHandle,
-                    "LEDMask": LEDMask,
-                    "RawColor": RawColor,
-                }
-            except Exception as exc:
-                self.sdk_error = f"Ozobot SDK import failed: {exc}"
+                    self._imports = {
+                        "EvoHandle": EvoHandle,
+                        "LEDMask": LEDMask,
+                        "RawColor": RawColor,
+                    }
+                except Exception as exc:
+                    self.sdk_error = f"Ozobot SDK import failed: {exc}"
 
     # Per-operation ceilings. A BLE scan that never returns must not wedge the
     # single worker queue forever (observed: 42 queued connects, zero completions).
@@ -94,8 +212,18 @@ class RobotController:
         "_connect_impl": 25.0,
         "_disconnect_impl": 10.0,
         "_halt_motion": 6.0,
+        "_sequence_impl": 30.0,
     }
     DEFAULT_TIMEOUT = 12.0
+    # Inner ceilings are always below the outer _submit ceiling so the owned
+    # loop cancels a hung task BEFORE the worker-level timeout machinery would
+    # fire — the replacement path should now be unreachable dead weight.
+    INNER_MARGIN = 2.0
+
+    def _sdk_call(self, coro, timeout: float | None = None):
+        if timeout is None:
+            timeout = max(self.DEFAULT_TIMEOUT - self.INNER_MARGIN, 1.0)
+        return self._ble.call(coro, timeout)
 
     def _submit(self, fn, *args) -> Any:
         """Run a controller operation on the single hardware worker.
@@ -194,16 +322,23 @@ class RobotController:
         seen, cur = set(), exc
         while cur is not None and id(cur) not in seen:
             seen.add(id(cur))
-            if type(cur).__module__.startswith("bleak") and str(cur).lower().startswith("not connected"):
-                return True
+            mod = type(cur).__module__ or ""
+            if (mod.startswith("bleak") or type(cur).__name__ == "BleakError"):
+                text = str(cur).lower()
+                if "not connected" in text or "disconnect" in text or "closed" in text:
+                    return True
             cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
         return False
 
     def _bury_link(self) -> None:
-        ctx, self._ctx, self.robot, self.connected = self._ctx, None, None, False
-        if ctx is not None:
+        handle, self._handle = self._handle, None
+        self.evo = None
+        self.robot = None
+        self.connected = False
+        self._ctx = None
+        if handle is not None:
             try:
-                ctx.__exit__(None, None, None)
+                self._ble.call(handle.__aexit__(None, None, None), 5.0)
             except Exception:
                 pass
 
@@ -247,42 +382,53 @@ class RobotController:
         if not self._imports:
             raise RuntimeError("Ozobot SDK is unavailable")
 
-        handle = None
         try:
-            handle = self._imports["SyncEvoHandle"](name=self.robot_name)
-            robot = handle.__enter__()
-            self._ctx = handle
-            self.robot = robot
-            self.connected = True
+            # EvoHandle is an async context manager; enter it ON the owned loop
+            # so the underlying bleak client is created and used on one
+            # always-running loop for the whole session.
+            self._sdk_call(self._async_connect(), timeout=self.OP_TIMEOUTS["_connect_impl"] - self.INNER_MARGIN)
             return self.status()
         except Exception as exc:
-            if handle is not None:
-                try:
-                    handle.__exit__(type(exc), exc, exc.__traceback__)
-                except Exception:
-                    pass
-            self.connected = False
-            self.robot = None
-            self._ctx = None
+            self._bury_link()
             raise RuntimeError(
                 "The SDK loaded but did not open the Evo connection. "
                 "The current ozobot-evo package is still experimental, so this may depend on its runtime driver. "
                 f"Original error: {exc}"
             ) from exc
 
+    async def _async_connect(self) -> None:
+        if self.fake_ble:
+            await asyncio.sleep(0.05)
+            self.evo = _FakeEvo(hang_at=self._fake_hang_at, drop_at=self._fake_drop_at)
+        else:
+            handle = self._imports["EvoHandle"](name=self.robot_name)
+            self.evo = await asyncio.wait_for(handle.__aenter__(), timeout=20.0)
+            self._handle = handle
+        self.connected = True
+
     def disconnect(self) -> dict[str, Any]:
         return self._submit(self._disconnect_impl)
 
     def _disconnect_impl(self) -> dict[str, Any]:
-        if self._ctx is not None:
-            try:
-                self._ctx.__exit__(None, None, None)
-            except Exception:
-                pass
+        try:
+            self._sdk_call(
+                self._async_close_handle(),
+                timeout=self.OP_TIMEOUTS["_disconnect_impl"] - self.INNER_MARGIN,
+            )
+        except Exception:
+            pass
         self._ctx = None
-        self.robot = None
+        self.evo = None
+        self._handle = None
         self.connected = False
         return self.status()
+
+    async def _async_close_handle(self) -> None:
+        if self._handle is not None:
+            try:
+                await asyncio.wait_for(self._handle.__aexit__(None, None, None), timeout=6.0)
+            finally:
+                self._handle = None
 
     def status(self) -> dict[str, Any]:
         return {
@@ -306,7 +452,8 @@ class RobotController:
         if self.simulate:
             time.sleep(min(abs(distance) / max(speed, 1), 0.35))
         else:
-            self.robot.move(distance, speed)
+            evo = self.evo
+            self._sdk_call(evo.move(distance, speed))
         return {"ok": True, "action": "move", "distance": distance, "speed": speed}
 
     def turn(self, angle: float, speed: float) -> dict[str, Any]:
@@ -316,7 +463,8 @@ class RobotController:
         if self.simulate:
             time.sleep(min(abs(angle) / max(speed, 1), 0.35))
         else:
-            self.robot.rotate(angle, speed)
+            evo = self.evo
+            self._sdk_call(evo.rotate(angle, speed))
         return {"ok": True, "action": "turn", "angle": angle, "speed": speed}
 
     def led(self, name: str) -> dict[str, Any]:
@@ -326,7 +474,8 @@ class RobotController:
         if not self.simulate:
             LEDMask = self._imports["LEDMask"]
             RawColor = self._imports["RawColor"]
-            self.robot.set_led(LEDMask.ALL_ROBOT, RawColor(*rgb))
+            evo = self.evo
+            self._sdk_call(evo.set_led(LEDMask.ALL_ROBOT, RawColor(*rgb)))
         return {"ok": True, "action": "led", "color": name}
 
     def tone(self, frequency: float, duration: float) -> dict[str, Any]:
@@ -334,7 +483,8 @@ class RobotController:
         frequency = clamp(require_finite(frequency, "frequency"), 180, 1600)
         duration = clamp(require_finite(duration, "duration"), 0.03, 0.35)
         if not self.simulate:
-            self.robot.play_tone(int(frequency), duration)
+            evo = self.evo
+            self._sdk_call(evo.play_tone(int(frequency), duration))
         else:
             time.sleep(duration)
         return {"ok": True, "action": "tone", "frequency": frequency, "duration": duration}
@@ -344,7 +494,7 @@ class RobotController:
         if self.simulate:
             self.surface = secrets.choice(["GREEN", "BLUE", "YELLOW", "PURPLE", "UNKNOWN"])
         else:
-            sample = self.robot.data.surface_color.read()
+            sample = self._sdk_call(self.evo.data.surface_color.read(), timeout=6.0)
             value = getattr(sample, "value", sample)
             self.surface = str(getattr(value, "name", value))
         return {"ok": True, "action": "read_color", "surface": self.surface}
@@ -460,7 +610,7 @@ class RobotController:
         # Instant: the abort flag is checked between sequence steps by the
         # hardware worker itself; velocity-zeroing is best-effort.
         self._abort = True
-        if not self.simulate and self.robot is not None:
+        if not self.simulate and self.evo is not None:
             try:
                 self._submit(self._halt_motion)
             except Exception:
@@ -469,7 +619,9 @@ class RobotController:
 
     def _halt_motion(self) -> None:
         try:
-            self.robot.set_velocity(0, 0, 0)
+            if not self.simulate and self.evo is not None:
+                evo = self.evo
+                self._ble.call(evo.set_velocity(0, 0, 0), 3.0)
         except Exception:
             pass
 
@@ -477,21 +629,20 @@ class RobotController:
         return self._submit(self._proximity_impl)
 
     def _proximity_impl(self) -> dict[str, Any]:
-        if self.simulate or not self.connected or self.robot is None:
+        if self.simulate or not self.connected or self.evo is None:
             return {"ok": True, "available": False}
-        left: bool | None = None
-        right: bool | None = None
+        evo = self.evo
         try:
-            left = bool(self.robot.data.obstacle_left_front.read())
+            left, right = self._ble.call(self._async_proximity(evo), 4.0)
         except Exception:
-            left = None
-        try:
-            right = bool(self.robot.data.obstacle_right_front.read())
-        except Exception:
-            right = None
-        if left is None or right is None:
             return {"ok": True, "available": False}
         return {"ok": True, "available": True, "front": {"left": left, "right": right}}
+
+    @staticmethod
+    async def _async_proximity(evo) -> tuple[Any, Any]:
+        left = bool(await evo.data.obstacle_left_front.read())
+        right = bool(await evo.data.obstacle_right_front.read())
+        return left, right
 
     def action(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._submit(self._action_impl, payload)

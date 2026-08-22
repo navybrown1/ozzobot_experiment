@@ -123,8 +123,20 @@ silently rebuilds the connection once and retries the operation. Clients see
 the normal `200` result — the drop costs a few seconds of pause, not the
 session. If resurrection fails, the original error propagates (500) so the
 app can surface a real failure. Connect/disconnect/halt/proximity ops are
-exempt. Test hook: env `OZI_TEST_DROP_AT_OP=k` makes the k-th counted op raise
-a simulated link-death (QA only).
+exempt.
+
+## Owned event loop (2026-08-22, motion C6)
+
+All SDK access runs on ONE permanent asyncio loop (`_BleLoop`) via
+`run_coroutine_threadsafe`, using the SDK's async `EvoHandle` — never the
+sync wrapper. Rationale: bleak requires a single always-running loop for the
+life of the client, and the sync wrapper's shared `asyncio.Runner` is not
+thread-safe (symptoms were "This event loop is already running", silent
+hangs, and recovery-exit spirals). Hung operations are CANCELLED at an inner
+ceiling (op timeout − 2s), so a stuck BLE call costs one failed op instead of
+poisoning the bridge. Test hooks (QA only): `OZI_FAKE_BLE=1` swaps in a fake
+async robot; `OZI_FAKE_HANG_AT_OP=k` / `OZI_FAKE_DROP_AT_OP=k` inject a hang
+(cancellation test) or a link-death (resurrect test) at op k.
 
 ## GET /proximity
 
