@@ -296,7 +296,7 @@
       </div>
       <fieldset class="floor-panel">
         <legend class="floor-legend">FLOOR ADVENTURE</legend>
-        <p class="modal-lead" style="margin-top:0">Desk mode keeps every wheel locked. Floor mode unlocks tiny supervised moves — only after you confirm the robot is somewhere safe.</p>
+        <p class="modal-lead" style="margin-top:0"><b>Ozi can't see — your camera is its eyes!</b> Desk mode keeps every wheel locked. Floor mode unlocks tiny supervised moves — only after you confirm the robot is somewhere safe.</p>
         <div class="mode-toggle" role="group" aria-label="Surface mode">
           <button class="mode-chip active" id="oziModeDesk" type="button">DESK</button>
           <button class="mode-chip" id="oziModeFloor" type="button">FLOOR</button>
@@ -305,15 +305,15 @@
         <div class="cam-frame">
           <video id="oziCamVideo" playsinline muted></video>
           <canvas id="oziCamCanvas" width="96" height="72"></canvas>
-          <span class="cam-hint">CALIBRATE // tap the camera preview (or the pixel canvas) on the color card you want Ozi to chase, then start a mode below.</span>
+          <span class="cam-hint">1. Tap PREVIEW CAMERA. 2. Hold a colored paper where Ozi can see it. 3. Tap the paper in the picture. 4. Pick a button below!</span>
         </div>
         <div class="button-row">
-          <button class="modal-secondary" id="oziCamPreview" type="button">PREVIEW CAMERA</button>
-          <button class="modal-primary follow-btn" id="oziFollowStart" type="button">FOLLOW ME <small>EXPERIMENTAL // FLOOR ONLY</small></button>
-          <button class="modal-secondary follow-btn" id="oziComeHere" type="button">COME HERE <small>EXPERIMENTAL // FLOOR ONLY</small></button>
-          <button class="modal-secondary follow-btn" id="oziHandMode" type="button">FOLLOW MY HAND <small>EXPERIMENTAL // FLOOR ONLY</small></button>
+          <button class="modal-secondary" id="oziCamPreview" type="button">TURN ON CAMERA</button>
+          <button class="modal-primary follow-btn" id="oziFollowStart" type="button">FOLLOW ME <small>Ozi chases my color card</small></button>
+          <button class="modal-secondary follow-btn" id="oziComeHere" type="button">COME HERE <small>Ozi drives to my card</small></button>
+          <button class="modal-secondary follow-btn" id="oziHandMode" type="button">SHOW THE CARD <small>hold it close to the camera</small></button>
         </div>
-        <p class="follow-status" id="oziFollowStatus">idle // preview the camera, calibrate a color card, confirm the floor, then start.</p>
+        <p class="follow-status" id="oziFollowStatus">Ready when you are: turn on the camera, tap your color card, then press a button.</p>
       </fieldset>
       <div class="warning-note"><b>HOW IT CONNECTS.</b> The bridge uses Ozobot's official Python packages with native Bluetooth LE (bleak/CoreBluetooth). Keep the official Ozobot Editor closed while connected — it holds the same Bluetooth link. Movement stays clamped (±120 mm, ±180°) and requires a fresh click or key press.</div>
     </section>

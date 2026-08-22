@@ -341,11 +341,20 @@
     $('#oziFollowStatus').textContent = followStatusText(st);
   }
 
+  function kidFollowDetail(d) {
+    const r = String(d || '').toLowerCase();
+    if (!r) return '';
+    if (r.includes('low-signal') || r.includes('calibrat')) return ' Try a brighter color.';
+    if (r.includes('floor')) return ' Switch to FLOOR first.';
+    if (r.includes('camera') || r.includes('video')) return ' Turn the camera on.';
+    return '';
+  }
+
   function followStatusText(st) {
-    if (!OP.Follow?.available?.()) return 'camera unavailable in this browser // follow modes disabled';
-    if (st.mode !== 'floor' || !st.floorConfirmed) return 'idle // switch to FLOOR and confirm the clear-floor area to arm follow modes.';
-    if (followTarget) return `armed // target h≈${Math.round(followTarget.h)}° — start a mode below. STOP button always works.`;
-    return 'armed // tap the camera preview on your color card to calibrate, then start a mode below.';
+    if (!OP.Follow?.available?.()) return "This browser has no camera, so Ozi can't chase your card.";
+    if (st.mode !== 'floor' || !st.floorConfirmed) return 'Tap FLOOR and tick the box so Ozi is allowed to drive.';
+    if (followTarget) return 'I can see your card! Pick a button below. STOP always works.';
+    return 'Turn on the camera, hold up a colored paper, then tap it in the picture.';
   }
 
   async function startPreview() {
@@ -381,10 +390,10 @@
         if (res && Number.isFinite(res.h)) {
           followTarget = { h: res.h, s: res.s ?? .8, v: res.v ?? .5 };
           try { localStorage.setItem('ozi-follow-target', JSON.stringify(followTarget)); } catch {}
-          $('#oziFollowStatus').textContent = `CALIBRATED // hue ≈ ${res.h}° (${res.count} px sampled). Start a mode below.`;
-          toast('Color locked', `Ozi will chase hue ${res.h}°.`);
+          $('#oziFollowStatus').textContent = 'I can see your card! Pick a button below.';
+          toast('Color locked in!', 'Ozi knows which color to chase.');
         } else {
-          $('#oziFollowStatus').textContent = 'CALIBRATION FAILED // low-signal region — try a brighter, more saturated card.';
+          $('#oziFollowStatus').textContent = "Hmm, that spot is too dark. Hold up brighter paper and tap it again.";
         }
         renderFloorPanel();
       });
@@ -569,6 +578,11 @@
       OP.Core.interact(btn.dataset.action);
     }));
 
+    const oziEl = $('#ozi');
+    if (oziEl) oziEl.addEventListener('pointerdown', () => {
+      if (ENGINE) OP.Core.interact('pet');
+    });
+
     $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
       if (snap && !snap.awake) return toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
       const z = btn.dataset.zone;
@@ -675,18 +689,30 @@
 
     $('#oziEStop').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.estop('manual STOP pressed'); });
     $('#oziEstopReset').addEventListener('click', async () => {
-      OP.Safety.reset();
-      $('#oziEstopBanner').hidden = true;
-      const hasKey = !!$('#bridgeKey').value.trim();
-      if (hasKey && !connected) {
-        toast('Waking Ozi up…', 'Starting the body again.');
-        for (let i = 0; i < 3 && !connected && !OP.Safety.state().estopped; i++) {
-          try { await connectBridge(); } catch {}
-          if (!connected) await new Promise(r => setTimeout(r, 3500));
+      const btn = $('#oziEstopReset');
+      if (btn.dataset.busy) return;
+      btn.dataset.busy = '1';
+      btn.disabled = true;
+      try {
+        OP.Safety.reset();
+        $('#oziEstopBanner').hidden = true;
+        const hasKey = !!$('#bridgeKey').value.trim();
+        if (hasKey && !connected) {
+          toast('Waking Ozi up…', 'Starting the body again.');
+          for (let i = 0; i < 3 && !connected && !OP.Safety.state().estopped; i++) {
+            await connectBridge();
+            if (!connected) await new Promise(r => setTimeout(r, 3500));
+          }
+          if (!connected) {
+            $('#oziEstopBanner').hidden = false;
+            toast('Ozi is still sleepy', 'Wait a moment and press START AGAIN.');
+          }
+        } else {
+          toast('Ozi is ready!', 'Press any button to play.');
         }
-        if (connected) $('#oziEstopBanner').hidden = true;
-      } else {
-        toast('Ozi is ready!', 'Press any button to play.');
+      } finally {
+        delete btn.dataset.busy;
+        btn.disabled = false;
       }
     });
 
@@ -730,12 +756,12 @@
     Bus.on('estop', onEstop);
     Bus.on('follow', d => {
       const st = d?.state;
-      const detail = d?.detail ? ` (${d.detail})` : '';
-      if (st === 'tracking') $('#oziFollowStatus').textContent = `TRACKING${detail}`;
-      else if (st === 'lost') $('#oziFollowStatus').textContent = `TARGET LOST${detail} — pulses stopped, waiting…`;
-      else if (st === 'starting') $('#oziFollowStatus').textContent = 'STARTING CAMERA…';
-      else if (st === 'stopped') { $('#oziFollowStatus').textContent = `STOPPED${detail}`; renderFloorPanel(); }
-      else if (st === 'error') { $('#oziFollowStatus').textContent = `ERROR${detail}`; renderFloorPanel(); }
+      const detail = d?.detail ? ` ${kidFollowDetail(d.detail)}` : '';
+      if (st === 'tracking') $('#oziFollowStatus').textContent = `Ozi is chasing your color card!${detail}`;
+      else if (st === 'lost') $('#oziFollowStatus').textContent = `Ozi lost the card — hold it up to the camera again.${detail}`;
+      else if (st === 'starting') $('#oziFollowStatus').textContent = 'Turning the camera on…';
+      else if (st === 'stopped') { $('#oziFollowStatus').textContent = `Stopped.${detail}`; renderFloorPanel(); }
+      else if (st === 'error') { $('#oziFollowStatus').textContent = `Oops — Ozi needs your help.${detail}`; renderFloorPanel(); }
     });
     Bus.on('tick-needs', () => renderAll());
     Bus.on('state-changed', () => renderAll());

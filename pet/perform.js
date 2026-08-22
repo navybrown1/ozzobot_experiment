@@ -22,7 +22,7 @@
   const TONE_MIN = 180, TONE_MAX = 1600, TONE_DMIN = 0.03, TONE_DMAX = 0.35;
   const MOVE_MAX = 120, MOVE_SMIN = 20, MOVE_SMAX = 80;
   const TURN_MAX = 180, TURN_SMIN = 30, TURN_SMAX = 120;
-  const WAIT_MAX = 1.5, ROUTINE_CAP = 8, ROUTINE_TIME_MAX = 6;
+  const WAIT_MAX = 1.5, ROUTINE_CAP = 16, ROUTINE_TIME_MAX = 9;
 
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const num = (v, f) => { if (typeof v === 'boolean') return f; const n = Number(v); return Number.isFinite(n) ? n : f; };
@@ -59,10 +59,16 @@
 
   function routine(steps, cap = ROUTINE_CAP) {
     const out = [];
+    let t = 0;
     if (!Array.isArray(steps)) return out;
     for (const s of steps) {
       const clean = S(s);
-      if (clean) out.push(clean);
+      if (!clean) continue;
+      // Same cost model as wallTime — keep builds inside the planner's pacing.
+      const cost = (clean.wait || 0) + (clean.tone ? clean.tone.duration || 0 : 0) + ((clean.move || clean.turn) ? 0.45 : 0);
+      if (out.length && t + cost > ROUTINE_TIME_MAX) break;
+      out.push(clean);
+      t += cost;
       if (out.length >= cap) break;
     }
     return out;
@@ -82,9 +88,10 @@
   const prims = {
     wiggle() {
       return routine([
-        { turn: { angle: 14, speed: 60 } }, { wait: 0.05 },
-        { turn: { angle: -14, speed: 60 } }, { wait: 0.05 },
-        { turn: { angle: 10, speed: 75 } }, { turn: { angle: -10, speed: 75 } }
+        { turn: { angle: 22, speed: 95 } }, { turn: { angle: -22, speed: 95 } },
+        { turn: { angle: 16, speed: 95 } }, { turn: { angle: -16, speed: 95 } },
+        { turn: { angle: 22, speed: 95 } }, { turn: { angle: -22, speed: 95 } },
+        { turn: { angle: 16, speed: 95 } }, { turn: { angle: -16, speed: 95 } }
       ]);
     },
     spin(dir) {
@@ -96,14 +103,17 @@
     },
     shimmy() {
       return routine([
-        { turn: { angle: 8, speed: 100 } }, { turn: { angle: -8, speed: 100 } },
-        { turn: { angle: 8, speed: 110 } }, { turn: { angle: -8, speed: 110 } }
+        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } },
+        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } },
+        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } }
       ]);
     },
     bounce() {
       return routine([
-        { move: { distance: 24, speed: 45 } }, { wait: 0.06 },
-        { move: { distance: -24, speed: 45 } }, { tone: { frequency: 523, duration: 0.06 } }
+        { move: { distance: 48, speed: 60 } }, { wait: 0.06 },
+        { move: { distance: -48, speed: 60 } }, { tone: { frequency: 523, duration: 0.06 } },
+        { move: { distance: 48, speed: 60 } }, { wait: 0.06 },
+        { move: { distance: -48, speed: 60 } }, { tone: { frequency: 659, duration: 0.08 } }
       ]);
     },
     approach(mm, speed) {
@@ -145,9 +155,11 @@
       desc: 'Left, right, forward, back - a rhythmic box step with its own built-on melody.',
       melody: [[440, 0.11], [554, 0.11], [659, 0.11], [554, 0.11], [440, 0.11], [330, 0.16]],
       build: () => [
-        { led: 'violet' }, { turn: { angle: 20, speed: 70 } }, ...prims.approach(40),
-        { turn: { angle: -20, speed: 70 } }, ...prims.retreat(40),
-        { turn: { angle: 20, speed: 75 } }, ...prims.approach(40),
+        { led: 'violet' }, { turn: { angle: 28, speed: 75 } }, ...prims.approach(70),
+        { turn: { angle: -28, speed: 75 } }, ...prims.retreat(70),
+        { turn: { angle: 28, speed: 80 } }, ...prims.approach(70),
+        { turn: { angle: -28, speed: 80 } }, ...prims.retreat(70),
+        { turn: { angle: 28, speed: 85 } }, ...prims.approach(70),
         { tone: { frequency: 659, duration: 0.09 } }
       ]
     },
@@ -158,7 +170,8 @@
       build: () => [
         { led: 'mint' }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
         { turn: { angle: 30, speed: 110 } }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
-        { turn: { angle: -30, speed: 110 } }, { tone: { frequency: 988, duration: 0.06 } }
+        { turn: { angle: -30, speed: 110 } }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
+        { turn: { angle: 90, speed: 110 } }, { tone: { frequency: 988, duration: 0.06 } }
       ]
     },
     {
@@ -166,9 +179,10 @@
       desc: 'Slow reverse glide with deliberate pauses and rotating LEDs. Claims zero credit for the name.',
       melody: [[494, 0.16], [440, 0.16], [494, 0.16], [415, 0.2], [440, 0.24]],
       build: () => [
-        { led: 'blue' }, { move: { distance: -35, speed: 35 } }, { wait: 0.15 },
-        { led: 'violet' }, { move: { distance: -35, speed: 35 } }, { wait: 0.15 },
-        { led: 'cyan' }, ...prims.retreat(30, 35)
+        { led: 'blue' }, { move: { distance: -55, speed: 35 } }, { wait: 0.1 },
+        { led: 'violet' }, { move: { distance: -55, speed: 35 } }, { wait: 0.1 },
+        { led: 'cyan' }, { move: { distance: -55, speed: 35 } }, { wait: 0.1 },
+        ...prims.retreat(45, 35)
       ]
     },
     {
@@ -317,26 +331,54 @@
       const ctx = getAudioCtx();
       if (!ctx) return;
       let t = ctx.currentTime + 0.02;
+      // Absolute-time grid (no cumulative drift); three-voice band so the
+      // browser version sounds like a tune, not a test beep.
       for (const n of notes) {
         if (!Array.isArray(n)) continue;
         const f = clamp(num(n[0], 440), TONE_MIN, TONE_MAX);
         const d = clamp(num(n[1], 0.08), 0.03, 0.5);
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = f;
-        try {
-          gain.gain.setValueAtTime(0.0001, t);
-          gain.gain.exponentialRampToValueAtTime(0.05, t + 0.015);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + d);
-        } catch {}
-        osc.connect(gain);
-        try { gain.connect(ctx.destination); } catch {}
-        osc.start(t);
-        osc.stop(t + d + 0.02);
+        const voice = (type, freq, vol, dur, at) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = type;
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.0001, at);
+          gain.gain.exponentialRampToValueAtTime(vol, at + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.001, at + dur);
+          osc.connect(gain);
+          try { gain.connect(ctx.destination); } catch {}
+          osc.start(at);
+          osc.stop(at + dur + 0.02);
+        };
+        voice('square', f, 0.055, d, t);                       // lead
+        voice('triangle', f * 1.26, 0.02, Math.max(d, 0.1), t); // pad fifth-ish
+        voice('sawtooth', Math.max(f / 2, TONE_MIN), 0.03, d, t); // bass
         t += d + 0.03;
       }
     } catch {}
+  }
+
+  // Interleave a dance's melody as real tone steps (the robot's own beeps).
+  // Notes land on direction changes/waits so they read as the beat without
+  // delaying motion beyond their (<=0.35s) duration — serial execution is the
+  // tempo.
+  function withMelody(steps, melody) {
+    if (!Array.isArray(steps) || !Array.isArray(melody) || !melody.length) return steps;
+    const out = [];
+    let ni = 0;
+    for (const s of steps) {
+      out.push(s);
+      const boundary = s.turn || s.wait || s.led;
+      if (boundary && ni < melody.length) {
+        const n = melody[ni++];
+        if (Array.isArray(n)) out.push({ tone: { frequency: clamp(num(n[0], 440), TONE_MIN, TONE_MAX), duration: clamp(num(n[1], 0.08), TONE_DMIN, TONE_DMAX) } });
+      }
+    }
+    while (ni < melody.length) {
+      const n = melody[ni++];
+      if (Array.isArray(n)) out.push({ tone: { frequency: clamp(num(n[0], 440), TONE_MIN, TONE_MAX), duration: clamp(num(n[1], 0.08), TONE_DMIN, TONE_DMAX) } });
+    }
+    return out;
   }
 
   let syncTimers = [];
@@ -371,12 +413,14 @@
     let steps = [];
     try { steps = routine(d.build() || [], ROUTINE_CAP); } catch { steps = []; }
     if (!steps.length) return { ok: false, simulated: false, error: 'dance produced no steps' };
+    const hwConnected = !!(Safety && Safety.state && Safety.state().connected);
+    if (hwConnected) steps = routine(withMelody(steps, d.melody), ROUTINE_CAP);
     emit('dance', { name: d.id, title: d.title });
     emit('anim', { name: d.anim || 'bop', ms: clamp(Math.round(wallTime(steps) * 1000) + 300, 400, 6000) });
     const firstLed = (steps.find(s => s.led) || {}).led || PALETTE[d.color] || PALETTE.mint;
     emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    playNotes(d.melody);
+    if (!hwConnected) playNotes(d.melody);
     const res = await execViaSafety(steps, 'dance:' + d.id);
     return { ok: !res.error, simulated: !!res.simulated, name: d.id, title: d.title, steps: steps.length, error: res.error || null };
   }
@@ -412,7 +456,7 @@
     const firstLed = (steps.find(x => x.led) || {}).led;
     if (firstLed) emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    playNotes(s.notes);
+    if (!(Safety && Safety.state && Safety.state().connected)) playNotes(s.notes);
     const res = await execViaSafety(steps, 'song:' + s.id);
     return { ok: !res.error, simulated: !!res.simulated, name: s.id, title: s.title, steps: steps.length, error: res.error || null };
   }

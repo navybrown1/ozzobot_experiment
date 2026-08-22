@@ -550,6 +550,20 @@
       }
       case 'sleep': { startBedtime(true); break; }
       case 'wake': { wake(); break; }
+      case 'pet': {
+        if (!s.awake) { wake(); break; }
+        s.needs.affection = clamp(s.needs.affection + 7); s.needs.trust = clamp(s.needs.trust + 2); s.needs.stress = clamp(s.needs.stress - 12); s.needs.boredom = clamp(s.needs.boredom - 3);
+        const n = s.needs;
+        const delighted = n.stress < 25 || n.affection > 70;
+        Bus.emit('anim', { name: delighted ? 'bop' : 'shiver', ms: 700 });
+        Bus.emit('led', { color: delighted ? '#ffd36c' : '#b780ff' });
+        P?.chirp?.(delighted ? 'happy' : 'alert');
+        speak(delighted
+          ? pick(['Accepted. Continue.', 'That spot is load-bearing. Do not stop.', 'Purring is not in my spec, but fine, purr noises.'])
+          : pick(['Surprise contact! Registering… okay, this is fine.', 'I felt that. I have decided to allow it.', 'Petting detected. Confidence rising.']));
+        driftDNA({ affection: 0.1 });
+        break;
+      }
       default: return { ok: false };
     }
     checkDiscoveries();

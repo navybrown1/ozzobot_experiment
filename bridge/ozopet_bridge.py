@@ -17,6 +17,7 @@ import math
 import os
 import secrets
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -66,6 +67,9 @@ class RobotController:
         self.surface = "unclassified"
         self._imports: dict[str, Any] = {}
         self._abort = False
+        self._recovery_lock = threading.Lock()
+        self._timeout_strikes: list[float] = []
+        self._lifetime_timeouts = 0
         # The BLE SDK is not thread-safe: every hardware operation must run on
         # ONE worker thread (the sync wrapper owns an asyncio loop per call).
         # ThreadingHTTPServer handlers submit work here and wait for it.
@@ -112,9 +116,18 @@ class RobotController:
             return result
         except FuturesTimeoutError:
             print(f"[hw] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
-            self._replace_worker()
-            if self._escalate():
-                import os
+            with self._recovery_lock:
+                self._replace_worker_locked()
+                escalate = self._escalate_locked()
+                if escalate:
+                    # The OS-level Bluetooth link is orphaned; only a process exit
+                    # reliably releases it. Try to stop motion first, best effort.
+                    try:
+                        self._hw.submit(self._halt_motion).result(timeout=4)
+                        self.connected = False
+                    except Exception:
+                        print("[hw] halt unconfirmed before recovery exit", flush=True)
+            if escalate:
                 print("[hw] repeated timeouts — exiting so supervisor restarts a clean "
                       "bridge (only a process exit reliably releases the Bluetooth link)", flush=True)
                 os._exit(75)
@@ -126,20 +139,27 @@ class RobotController:
             print(f"[hw] FAILED {name}:\n{traceback.format_exc()}", flush=True)
             raise
 
-    def _replace_worker(self) -> None:
-        """Discard the executor whose thread is stuck inside SDK code."""
+    def _replace_worker_locked(self) -> None:
+        """Discard the executor whose thread is stuck inside SDK code.
+
+        cancel_futures: jobs still queued behind the wedged op must NOT run later
+        on the zombie thread and mutate controller state concurrently with the
+        fresh worker (the BLE SDK is not thread-safe).
+        """
         old = self._hw
         self._hw = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ozo-hw")
-        old.shutdown(wait=False)
+        old.shutdown(wait=False, cancel_futures=True)
 
-    def _escalate(self) -> bool:
-        """True when timeouts repeat: the OS-level BLE link is orphaned and only
-        a process exit releases it. The supervisor restarts us automatically."""
-        import time as _time
-        now = _time.monotonic()
-        self._timeout_strikes = [t for t in getattr(self, "_timeout_strikes", []) if now - t < 120]
-        self._timeout_strikes.append(now)
-        return len(self._timeout_strikes) >= 2
+    def _escalate_locked(self) -> bool:
+        """True when timeouts cluster (orphaned BLE link — exit and let the
+        supervisor restart us clean), or when they keep recurring over the
+        bridge's lifetime (slow leak of un-killable zombie threads)."""
+        now = time.monotonic()
+        recent = [t for t in self._timeout_strikes if now - t < 120]
+        recent.append(now)
+        self._timeout_strikes = recent
+        self._lifetime_timeouts += 1
+        return len(recent) >= 2 or self._lifetime_timeouts >= 5
 
     @property
     def mode(self) -> str:
