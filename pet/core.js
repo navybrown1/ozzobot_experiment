@@ -251,8 +251,9 @@
 
     const floorOK = source === 'gesture' || safety.floorConfirmed;
     const out = [];
-    let budget = 7000;
+    let budget = 9000;
     for (let i = 0; i < steps.length; i++) {
+      if (out.length >= 16) break;                                 // bridge contract: never send more than 16 steps
       const st = steps[i];
       if (st.move) {
         if (safety.mode !== 'floor' || !floorOK) continue;           // desk mode: no translation, ever
@@ -270,7 +271,9 @@
         if (st.move === undefined) budget -= Math.abs(st.turn.angle) / Math.max(st.turn.speed, 1) * 1000 + 250;
       }
       if ((st.move || st.turn) && out.length && (out[out.length - 1].move || out[out.length - 1].turn)) {
-        out.push({ wait: 0.25 }); budget -= 250;                     // breathing gap between motor pulses
+        if (out.length < 15) {                                       // gap must leave room for the next step too
+          out.push({ wait: 0.25 }); budget -= 250;                   // breathing gap between motor pulses
+        }
       }
       if (budget <= 0) break;
       out.push(st);

@@ -407,6 +407,28 @@
     }
   }
 
+  // Safety.execSteps inserts a breathing wait between adjacent motor steps,
+  // so the sequence it SENDS can exceed the step count we hand it. The bridge
+  // hard-rejects >16 steps — trim least-valuable steps (trailing tones/waits)
+  // until the inflated count fits, keeping the dance intact.
+  function adjMotorPairs(a) {
+    let n = 0;
+    for (let i = 1; i < a.length; i++) {
+      const p = a[i - 1], c = a[i];
+      if ((p.move || p.turn) && (c.move || c.turn)) n++;
+    }
+    return n;
+  }
+  function fitToBridge(steps) {
+    const a = (steps || []).slice();
+    while (a.length && a.length + adjMotorPairs(a) > 16) {
+      let idx = -1;
+      for (let i = a.length - 1; i >= 0; i--) { if (a[i].tone || a[i].wait) { idx = i; break; } }
+      a.splice(idx >= 0 ? idx : a.length - 1, 1);
+    }
+    return a;
+  }
+
   async function dance(id) {
     const d = DANCES.find(x => x && x.id === id);
     if (!d) return { ok: false, simulated: false, error: 'unknown dance: ' + String(id) };
@@ -414,7 +436,7 @@
     try { steps = routine(d.build() || [], ROUTINE_CAP); } catch { steps = []; }
     if (!steps.length) return { ok: false, simulated: false, error: 'dance produced no steps' };
     const hwConnected = !!(Safety && Safety.state && Safety.state().connected);
-    if (hwConnected) steps = routine(withMelody(steps, d.melody), ROUTINE_CAP);
+    if (hwConnected) { steps = routine(withMelody(steps, d.melody), ROUTINE_CAP); steps = fitToBridge(steps); }
     emit('dance', { name: d.id, title: d.title });
     emit('anim', { name: d.anim || 'bop', ms: clamp(Math.round(wallTime(steps) * 1000) + 300, 400, 6000) });
     const firstLed = (steps.find(s => s.led) || {}).led || PALETTE[d.color] || PALETTE.mint;
