@@ -232,14 +232,23 @@
   }
 
   /* ================= emergency stop ================= */
+  function kidStopReason(reason) {
+    const r = String(reason || '').toLowerCase();
+    if (!r || r === 'manual') return 'The big red button was pressed.';
+    if (r.includes('tab hidden')) return 'Ozi paused because the page was hidden.';
+    if (r.includes('timeout') || r.includes('bridge') || r.includes('discover') || r.includes('bluetooth') || r.includes('service')) return 'Ozi lost its robot body connection.';
+    if (r.includes('read_color') || r.includes('fail') || r.includes('error')) return 'The robot body had a problem, so Ozi stopped to stay safe.';
+    return 'Ozi stopped moving to stay safe.';
+  }
+
   function onEstop(data) {
     OP.Follow?.stop?.();
     stopPreview();
     $('#oziEStop').hidden = true;
     $('#oziEstopBanner').hidden = false;
-    $('#oziEstopReason').textContent = data?.reason ? `— ${data.reason}` : '';
+    $('#oziEstopReason').textContent = data?.reason ? `— ${kidStopReason(data.reason)}` : '— Ozi stopped moving to stay safe.';
     setConnectedUI(false);
-    toast('EMERGENCY STOP', 'All motion commands cut. Ozi returns to simulation-only.');
+    toast('ALL STOPPED', 'Ozi stopped moving. Press START AGAIN when you are ready.');
   }
 
   /* ================= hardware lab (legacy flow + safety) ================= */
@@ -549,6 +558,12 @@
 
   /* ================= event bindings ================= */
   function bindEvents() {
+    const unlockAudio = () => {
+      try { OP.Perform?.unlockAudio?.(); } catch {}
+    };
+    window.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
+    window.addEventListener('keydown', unlockAudio, { once: true, capture: true });
+
     $$('[data-action]').forEach(btn => btn.addEventListener('click', () => {
       if (!ENGINE) return toast('Engine offline', 'Refresh the page — the pet brain failed to load.');
       OP.Core.interact(btn.dataset.action);

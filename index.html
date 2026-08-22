@@ -141,9 +141,6 @@
               <span class="zone-note">blue / home</span>
             </button>
 
-            <div class="route route-one" aria-hidden="true"></div>
-            <div class="route route-two" aria-hidden="true"></div>
-            <div class="route route-three" aria-hidden="true"></div>
             <div class="trail" id="trail"></div>
             <div class="pet-shadow" id="petShadow"></div>
 
@@ -179,12 +176,12 @@
 
         <div class="control-rack">
           <div class="rack-label">INTERACTION BAY</div>
-          <button class="action action-hello" data-action="hello"><span>01</span><b>SAY HELLO</b><small>acknowledge me</small></button>
-          <button class="action action-feed" data-action="feed"><span>02</span><b>CRUNCHBYTE</b><small>offer tribute</small></button>
-          <button class="action action-explore" data-action="explore"><span>03</span><b>EXPLORE</b><small>follow curiosity</small></button>
-          <button class="action action-dance" data-action="dance"><span>04</span><b>DANCE</b><small>request nonsense</small></button>
-          <button class="action action-mischief" data-action="mischief"><span>05</span><b>TEMPT FATE</b><small>bad influence</small></button>
-          <button class="action action-sleep" data-action="sleep"><span>06</span><b>BEDTIME</b><small>dream later</small></button>
+          <button class="action action-hello" data-action="hello"><img class="act-icon" src="assets/buttons/hi.png" alt="" width="48" height="48"><b>HELLO</b><small>wave at me</small></button>
+          <button class="action action-feed" data-action="feed"><img class="act-icon" src="assets/buttons/feed.png" alt="" width="48" height="48"><b>SNACK</b><small>give a treat</small></button>
+          <button class="action action-explore" data-action="explore"><img class="act-icon" src="assets/buttons/explore.png" alt="" width="48" height="48"><b>EXPLORE</b><small>look around</small></button>
+          <button class="action action-dance" data-action="dance"><img class="act-icon" src="assets/buttons/dance.png" alt="" width="48" height="48"><b>DANCE</b><small>move it!</small></button>
+          <button class="action action-mischief" data-action="mischief"><span class="act-glyph" aria-hidden="true">?</span><b>TROUBLE</b><small>bad ideas</small></button>
+          <button class="action action-sleep" data-action="sleep"><img class="act-icon" src="assets/buttons/sleep.png" alt="" width="48" height="48"><b>BEDTIME</b><small>nap time</small></button>
         </div>
       </section>
 
@@ -247,7 +244,7 @@
         <div class="howto-panel">
           <div class="tiny-label" style="margin-top:0">NO ROBOT? START HERE</div>
           <div class="howto-step"><span class="howto-num">1</span><div><b>JUST LOOK AT OZI</b><p>It is already awake. It watches the desk, thinks thoughts and mutters them in the MINDSTREAM.</p></div></div>
-          <div class="howto-step"><span class="howto-num">2</span><div><b>PRESS THE SIX BIG BUTTONS</b><p>SAY HELLO greets you. CRUNCHBYTE offers a snack tribute. EXPLORE follows curiosity. DANCE requests nonsense. TEMPT FATE is a bad influence. BEDTIME puts OZI to sleep.</p></div></div>
+          <div class="howto-step"><span class="howto-num">2</span><div><b>PRESS THE SIX BIG BUTTONS</b><p>HELLO says hi. SNACK gives a treat. EXPLORE looks around. DANCE starts a party. TROUBLE is a bad influence. BEDTIME is nap time.</p></div></div>
           <div class="howto-step"><span class="howto-num">3</span><div><b>COME BACK TOMORROW</b><p>OZI notices when you are gone. Its mood drifts, new TINY MEMORIES appear, and the DREAM VAULT remixes your day into tiny stories.</p></div></div>
         </div>
         <div class="howto-panel">
@@ -282,11 +279,11 @@
         <div class="control-panel">
           <div class="tiny-label">SAFE BODY TEST</div>
           <div class="dpad">
-            <button data-hw="forward">▲</button>
-            <button data-hw="left">◀</button>
-            <button data-hw="tone">●</button>
-            <button data-hw="right">▶</button>
-            <button data-hw="back">▼</button>
+            <button data-hw="forward">▲<small>GO</small></button>
+            <button data-hw="left">◀<small>LEFT</small></button>
+            <button data-hw="tone">●<small>BEEP</small></button>
+            <button data-hw="right">▶<small>RIGHT</small></button>
+            <button data-hw="back">▼<small>BACK</small></button>
           </div>
           <div class="led-swatches">
             <button data-led="mint" style="--swatch:#4bd69d" aria-label="mint LED"></button>
@@ -369,12 +366,12 @@
   <div class="request-card" id="oziRequestCard" role="status" aria-live="polite" hidden></div>
 
   <div class="estop-banner" id="oziEstopBanner" hidden>
-    <b>EMERGENCY STOP</b>
+    <b>ALL STOPPED</b>
     <span id="oziEstopReason"></span>
-    <button id="oziEstopReset" type="button">RESET SAFETY</button>
+    <button id="oziEstopReset" type="button">START AGAIN</button>
   </div>
 
-  <button class="estop" id="oziEStop" type="button" hidden>STOP</button>
+  <button class="estop" id="oziEStop" type="button" hidden aria-label="Emergency stop"><img src="assets/buttons/stop.png" alt=""></button>
 
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <script src="./runtime-guard.js"></script>

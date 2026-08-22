@@ -423,6 +423,11 @@
     return { ok: true, kind: key };
   }
 
+  function unlockAudio() {
+    const ctx = getAudioCtx();
+    return { ok: !!ctx && ctx.state === 'running', state: ctx ? ctx.state : 'unavailable' };
+  }
+
   function listDances() {
     return DANCES.map(d => ({
       id: d.id,
@@ -445,6 +450,7 @@
     dance,
     express,
     song,
-    chirp
+    chirp,
+    unlockAudio
   };
 })();
