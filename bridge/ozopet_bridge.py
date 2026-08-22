@@ -18,6 +18,7 @@ import os
 import secrets
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -64,6 +65,10 @@ class RobotController:
         self.surface = "unclassified"
         self._imports: dict[str, Any] = {}
         self._abort = False
+        # The BLE SDK is not thread-safe: every hardware operation must run on
+        # ONE worker thread (the sync wrapper owns an asyncio loop per call).
+        # ThreadingHTTPServer handlers submit work here and wait for it.
+        self._hw = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ozo-hw")
 
         if not self.simulate:
             try:
@@ -78,11 +83,24 @@ class RobotController:
             except Exception as exc:
                 self.sdk_error = f"Ozobot SDK import failed: {exc}"
 
+    def _submit(self, fn, *args) -> Any:
+        """Run a controller operation on the single hardware worker."""
+        import threading, traceback
+        print(f"[hw] submit {getattr(fn, '__name__', fn)} on worker", flush=True)
+        try:
+            return self._hw.submit(fn, *args).result()
+        except Exception as exc:
+            print(f"[hw] FAILED {getattr(fn, '__name__', fn)}:\n{traceback.format_exc()}", flush=True)
+            raise
+
     @property
     def mode(self) -> str:
         return "simulator" if self.simulate else "hardware"
 
     def connect(self) -> dict[str, Any]:
+        return self._submit(self._connect_impl)
+
+    def _connect_impl(self) -> dict[str, Any]:
         if self.connected:
             return self.status()
         if self.simulate:
@@ -117,6 +135,9 @@ class RobotController:
             ) from exc
 
     def disconnect(self) -> dict[str, Any]:
+        return self._submit(self._disconnect_impl)
+
+    def _disconnect_impl(self) -> dict[str, Any]:
         if self._ctx is not None:
             try:
                 self._ctx.__exit__(None, None, None)
@@ -247,6 +268,9 @@ class RobotController:
             require_finite(step["wait"], "wait")
 
     def sequence(self, steps: Any) -> dict[str, Any]:
+        return self._submit(self._sequence_impl, steps)
+
+    def _sequence_impl(self, steps: Any) -> dict[str, Any]:
         if not isinstance(steps, list):
             raise ValueError("'steps' must be a list")
         if len(steps) > 16:
@@ -290,15 +314,26 @@ class RobotController:
         }
 
     def stop(self) -> dict[str, Any]:
+        # Instant: the abort flag is checked between sequence steps by the
+        # hardware worker itself; velocity-zeroing is best-effort.
         self._abort = True
-        if self.robot is not None:
+        if not self.simulate and self.robot is not None:
             try:
-                self.robot.set_velocity(0, 0, 0)
+                self._submit(self._halt_motion)
             except Exception:
                 pass
         return {"ok": True, "action": "stop"}
 
+    def _halt_motion(self) -> None:
+        try:
+            self.robot.set_velocity(0, 0, 0)
+        except Exception:
+            pass
+
     def proximity(self) -> dict[str, Any]:
+        return self._submit(self._proximity_impl)
+
+    def _proximity_impl(self) -> dict[str, Any]:
         if self.simulate or not self.connected or self.robot is None:
             return {"ok": True, "available": False}
         left: bool | None = None
@@ -316,6 +351,9 @@ class RobotController:
         return {"ok": True, "available": True, "front": {"left": left, "right": right}}
 
     def action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._submit(self._action_impl, payload)
+
+    def _action_impl(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._abort = False
         action = str(payload.get("action", ""))
         if action == "move":
