@@ -109,7 +109,8 @@ class RobotController:
         timeout = self.OP_TIMEOUTS.get(name, self.DEFAULT_TIMEOUT)
         ts = lambda: time.strftime("%H:%M:%S")
         print(f"[hw {ts()}] submit {name} on worker (timeout={timeout}s)", flush=True)
-        future = self._hw.submit(fn, *args)
+        dispatch_fn = self._maybe_arm_test_drop(fn, name)
+        future = self._hw.submit(dispatch_fn, *args)
         t0 = time.monotonic()
         try:
             result = future.result(timeout=timeout)
@@ -138,8 +139,73 @@ class RobotController:
                 "the bridge recovered itself — try connecting again."
             ) from None
         except Exception as exc:
+            # Silent auto-resurrect: BLE links do drop mid-session (2026-08-22
+            # 17:57 incident — link died between two dances). If the robot was
+            # believed alive and the failure says otherwise, rebuild the
+            # connection once and retry the operation before giving up.
+            if (
+                self.connected
+                and name not in ("_connect_impl", "_disconnect_impl", "_halt_motion")
+                and self._is_link_dead(exc)
+            ):
+                print(f"[hw {ts()}] LINK LOST during {name} — attempting silent auto-resurrect", flush=True)
+                try:
+                    self._bury_link()
+                    self._hw.submit(self._connect_impl).result(timeout=self.OP_TIMEOUTS["_connect_impl"])
+                    print(f"[hw {ts()}] auto-resurrect OK — retrying {name}", flush=True)
+                    t1 = time.monotonic()
+                    result = self._hw.submit(fn, *args).result(timeout=timeout)
+                    print(f"[hw {ts()}] done {name} (retried) in {time.monotonic() - t1:.2f}s", flush=True)
+                    return result
+                except Exception as resurrect_exc:
+                    print(
+                        f"[hw {ts()}] auto-resurrect FAILED — giving up so the app sees the real error:\n"
+                        f"{resurrect_exc}",
+                        flush=True,
+                    )
             print(f"[hw {ts()}] FAILED {name}:\n{traceback.format_exc()}", flush=True)
             raise
+
+    _RESURRECT_EXEMPT = ("_connect_impl", "_disconnect_impl", "_halt_motion",
+                         "_proximity_impl", "_status_impl")
+
+    def _maybe_arm_test_drop(self, fn, name):
+        """Test hook (OZI_TEST_DROP_AT_OP=k): make the k-th counted hardware op
+        raise a bleak 'Not connected' error once, to exercise auto-resurrect
+        without real radio flakiness."""
+        drop_at = int(os.environ.get("OZI_TEST_DROP_AT_OP", "0") or 0)
+        if not drop_at or name in self._RESURRECT_EXEMPT:
+            return fn
+        self._op_counter = getattr(self, "_op_counter", 0) + 1
+        if self._op_counter != drop_at or getattr(self, "_drop_fired", False):
+            return fn
+        self._drop_fired = True
+
+        def boom(*a, **kw):
+            try:
+                import bleak
+                raise bleak.BleakError("Not connected")
+            except ImportError:
+                raise RuntimeError("simulated link loss (bleak unavailable)")
+
+        return boom
+
+    def _is_link_dead(self, exc) -> bool:
+        seen, cur = set(), exc
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            if type(cur).__module__.startswith("bleak") and str(cur).lower().startswith("not connected"):
+                return True
+            cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
+        return False
+
+    def _bury_link(self) -> None:
+        ctx, self._ctx, self.robot, self.connected = self._ctx, None, None, False
+        if ctx is not None:
+            try:
+                ctx.__exit__(None, None, None)
+            except Exception:
+                pass
 
     def _replace_worker_locked(self) -> None:
         """Discard the executor whose thread is stuck inside SDK code.

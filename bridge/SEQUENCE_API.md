@@ -115,6 +115,17 @@ curl -s -X POST http://127.0.0.1:8787/stop -H "X-OzoPet-Key: $OZOPET_BRIDGE_KEY"
 (failures swallowed); in simulator mode it is a no-op. `/stop` always
 answers `200`.
 
+## Link-loss auto-resurrect (2026-08-22)
+
+If a hardware op fails because the BLE link died mid-session (bleak
+"Not connected") while the bridge believed the robot was connected, the bridge
+silently rebuilds the connection once and retries the operation. Clients see
+the normal `200` result — the drop costs a few seconds of pause, not the
+session. If resurrection fails, the original error propagates (500) so the
+app can surface a real failure. Connect/disconnect/halt/proximity ops are
+exempt. Test hook: env `OZI_TEST_DROP_AT_OP=k` makes the k-th counted op raise
+a simulated link-death (QA only).
+
 ## GET /proximity
 
 Same auth as `/health`. Hardware + connected only:
