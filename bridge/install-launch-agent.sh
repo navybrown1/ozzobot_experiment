@@ -41,5 +41,14 @@ if (( loaded == 0 )); then
 fi
 launchctl kickstart -k "gui/$USER_ID/$SERVICE"
 
+for _ in {1..5}; do
+  [[ -s "$RUNTIME_DIR/bridge-key" ]] && break
+  sleep 1
+done
+
 print "OzoPet bridge service installed and started."
 print "Health: http://127.0.0.1:8787/health"
+if [[ -s "$RUNTIME_DIR/bridge-key" ]]; then
+  print "Bridge key: $(< "$RUNTIME_DIR/bridge-key")"
+  print "Key file: $RUNTIME_DIR/bridge-key"
+fi

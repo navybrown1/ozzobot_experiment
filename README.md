@@ -83,9 +83,10 @@ bridge/install-launch-agent.sh
 The installer synchronizes the runtime into
 `~/Library/Application Support/OzoPet/bridge` because macOS protects
 `~/Desktop` from background LaunchAgents. Re-run it after changing bridge code
-to refresh the service copy. The service keeps the Hardware Lab key
-`evo-test-key-001` and remains bound to the loopback-only endpoint
-`127.0.0.1:8787`.
+to refresh the service copy. The service creates a per-user Hardware Lab key
+at `~/Library/Application Support/OzoPet/bridge/bridge-key` with mode `600`;
+the installer prints it for pasting into Hardware Lab. The bridge remains
+bound to the loopback-only endpoint `127.0.0.1:8787`.
 
 Windows (PowerShell) — same script logic manually:
 
