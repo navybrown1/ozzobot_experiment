@@ -226,7 +226,9 @@ class RobotController:
     # Per-operation ceilings. A BLE scan that never returns must not wedge the
     # single worker queue forever (observed: 42 queued connects, zero completions).
     OP_TIMEOUTS = {
-        "_connect_impl": 25.0,
+        # Connect is its own slow path: a real Evo handshake can take ~20s,
+        # so the ladder (2 attempts x ~50s + settle) must fit under this.
+        "_connect_impl": 110.0,
         "_disconnect_impl": 10.0,
         "_halt_motion": 6.0,
         "_sequence_impl": 30.0,
@@ -262,6 +264,15 @@ class RobotController:
             print(f"[hw {ts()}] done {name} in {time.monotonic() - t0:.2f}s", flush=True)
             return result
         except FuturesTimeoutError:
+            # A connect timeout is an EXPECTED, user-initiated slow path — never
+            # treat it as an orphaned-link emergency that kills the process or
+            # churns the executor (2026-08-22e C10).
+            if name == "_connect_impl":
+                print(f"[hw {ts()}] TIMEOUT {name} after {timeout}s — connect gave up (no escalation)", flush=True)
+                raise RuntimeError(
+                    f"Hardware operation '{name}' timed out. The Bluetooth link was stuck; "
+                    "the bridge recovered itself — try connecting again."
+                ) from None
             print(f"[hw {ts()}] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
             with self._recovery_lock:
                 self._replace_worker_locked()
@@ -399,19 +410,30 @@ class RobotController:
         if not self._imports:
             raise RuntimeError("Ozobot SDK is unavailable")
 
-        try:
-            # EvoHandle is an async context manager; enter it ON the owned loop
-            # so the underlying bleak client is created and used on one
-            # always-running loop for the whole session.
-            self._sdk_call(self._async_connect(), timeout=self.OP_TIMEOUTS["_connect_impl"] - self.INNER_MARGIN)
-            return self.status()
-        except Exception as exc:
-            self._bury_link()
-            raise RuntimeError(
-                "The SDK loaded but did not open the Evo connection. "
-                "The current ozobot-evo package is still experimental, so this may depend on its runtime driver. "
-                f"Original error: {exc}"
-            ) from exc
+        # Connect resilience ladder (2026-08-22e, council C10). A slow/failed
+        # BLE handshake is NORMAL for the experimental ozobot-evo driver — one
+        # bad attempt must not kill the session. Each attempt: open the handle
+        # ON the owned loop, and (critically) assign self._handle BEFORE awaiting
+        # __aenter__ so a timeout can be properly buried instead of leaking a
+        # half-open CoreBluetooth client that blocks every future reconnect.
+        last_err = None
+        for attempt in range(1, 3):
+            try:
+                self._sdk_call(self._async_connect(), timeout=50.0)
+                return self.status()
+            except Exception as exc:
+                last_err = exc
+                self._bury_link()  # now effective: _async_connect pre-assigned the handle
+                if attempt < 2:
+                    try:
+                        self._ble.call(asyncio.sleep(3.0), 4.0)  # let the OS BLE stack settle
+                    except Exception:
+                        pass
+        raise RuntimeError(
+            "The SDK loaded but did not open the Evo connection. "
+            "The current ozobot-evo package is still experimental, so this may depend on its runtime driver. "
+            f"Original error: {last_err}"
+        ) from last_err
 
     async def _async_connect(self) -> None:
         if self.fake_ble:
@@ -419,8 +441,8 @@ class RobotController:
             self.evo = _FakeEvo(hang_at=self._fake_hang_at, drop_at=self._fake_drop_at)
         else:
             handle = self._imports["EvoHandle"](name=self.robot_name)
-            self.evo = await asyncio.wait_for(handle.__aenter__(), timeout=20.0)
-            self._handle = handle
+            self._handle = handle  # assigned BEFORE awaiting so a timeout can be buried
+            self.evo = await handle.__aenter__()
         self.connected = True
 
     def disconnect(self) -> dict[str, Any]:

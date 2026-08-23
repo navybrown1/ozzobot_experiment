@@ -328,13 +328,15 @@
     if (amSpectator()) return toast('Another window is driving', 'Close the other OziPet tab first — one robot, one driver.');
     const key = $('#bridgeKey').value.trim();
     if (!key) return toast('Bridge key missing', 'Run bridge/ozopet_bridge.py and paste the key it prints.');
-    connectingBridge = true;
-    try {
-      const health = await hardwareRequest('/health');
-      if (!health.ok) throw new Error('bridge health check failed');
-      // Real BLE connects can take up to ~20s (observed); give the bridge room.
-      const result = await hardwareRequest('/connect', {}, 30000);
-      setConnectedUI(!!result.connected);
+      connectingBridge = true;
+      try {
+        const health = await hardwareRequest('/health');
+        if (!health.ok) throw new Error('bridge health check failed');
+        // Real BLE connects can take ~20s and occasionally longer; the bridge
+        // now auto-retries with settle time (council C10), so give it room.
+        toast('Reaching the Evo…', 'Bluetooth handshakes can take up to a minute. Keep the robot close and the official Ozobot Editor closed.');
+        const result = await hardwareRequest('/connect', {}, 120000);
+        setConnectedUI(!!result.connected);
       try { OP.Games?.stopAll?.(); } catch {} // fresh session never inherits a stale mission (2026-08-22e)
       $('#surfaceReadout').textContent = result.surface || 'waiting';
       toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
@@ -786,7 +788,7 @@
         const hasKey = !!$('#bridgeKey').value.trim();
         if (hasKey && !connected) {
           toast('Waking Ozi up…', 'Starting the body again.');
-          for (let i = 0; i < 3 && !connected && !OP.Safety.state().estopped; i++) {
+          for (let i = 0; i < 2 && !connected && !OP.Safety.state().estopped; i++) {
             await connectBridge();
             if (!connected) await new Promise(r => setTimeout(r, 3500));
           }

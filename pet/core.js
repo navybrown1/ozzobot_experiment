@@ -306,6 +306,11 @@
       emitStepEvents(out, false);
       return { ok: true, truncated: !!data.truncated, results: data.results };
     } catch (err) {
+      // C11 (2026-08-22e): a single stalled op must NOT nuke the whole session.
+      // The owned-loop bridge survives task cancellation, so attempt one silent
+      // self-heal (halt + reconnect) before falling back to a full estop.
+      const healed = await tryHealSession(err);
+      if (healed) return { ok: false, abandoned: true, error: 'recovered after a stall — trick skipped' };
       estop('bridge: ' + (err?.name === 'AbortError' ? 'timeout' : err?.message || 'failure'));
       return { ok: false, error: String(err?.message || err) };
     } finally { safety.executing = false; safety.execHasMotor = false; }
@@ -317,6 +322,27 @@
       if (simulatedOnly && (s.move || s.turn)) Bus.emit('anim', { name: s.move && s.move.distance < 0 ? 'nervous' : 'bop', ms: 500 });
       else if (s.move || s.turn) Bus.emit('anim', { name: 'bop', ms: 500 });
     }
+  }
+
+  // C11 (2026-08-22e): recover a session after a single BLE stall without the
+  // old scorched-earth estop. Halts motion, best-effort reconnects on the
+  // existing key, and (if it comes back) keeps the session alive. Returns true
+  // only when the link is restored.
+  async function tryHealSession(err) {
+    if (safety.estopped) return false;
+    const reason = String(err?.name === 'AbortError' ? 'timeout' : err?.message || err);
+    try {
+      bridgeFetch('/stop', { body: {} }, 2500).catch(() => {});
+      const res = await bridgeFetch('/connect', { body: {} }, 15000);
+      if (res && res.ok && res.connected) {
+        safety.estopped = false;
+        safety.connected = true;
+        Bus.emit('estate', { connected: true, mode: safety.mode });
+        Bus.emit('toast', { title: 'Recovered the link', text: 'Ozi hiccupped but held on. Try that again.' });
+        return true;
+      }
+    } catch { /* fall through to estop */ }
+    return false;
   }
 
   function estop(reason = 'manual') {
