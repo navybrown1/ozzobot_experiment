@@ -255,8 +255,12 @@
   /* ================= hardware lab (legacy flow + safety) ================= */
   let connected = false;
   function setConnectedUI(v) {
-    connected = v === true;
-    if (ENGINE) OP.Safety.setConnected(connected);
+    const next = v === true;
+    connected = next;
+    // Safety.setConnected emits `estate`, whose UI listener comes back here.
+    // Only notify the engine when the value actually changes; otherwise a
+    // reconnect can recurse through the bus until the browser swallows it.
+    if (ENGINE && OP.Safety.state().connected !== connected) OP.Safety.setConnected(connected);
     if (snap) { renderAll(); } else { $('#connectionOrb')?.classList.toggle('connected', connected); }
   }
 
@@ -323,20 +327,72 @@
   }
 
   let connectingBridge = false;
+  let syncingBridge = false;
+
+  function showBridgeLostState() {
+    if (!connected) return;
+    try { OP.Follow?.stop?.(); } catch {}
+    try { OP.Games?.stopAll?.(); } catch {}
+    setConnectedUI(false);
+    $('#oziEStop').hidden = true;
+    $('#oziEstopBanner').hidden = false;
+    $('#oziEstopReason').textContent = '— Ozi lost its robot body connection.';
+    toast('ALL STOPPED', 'Ozi lost the robot body. Press START AGAIN to reconnect.');
+  }
+
+  // Read-only reconciliation for the common stale-tab case: the local
+  // bridge is already attached to Evo, but this browser tab still says
+  // SIMULATION after a reload, sleep, or an interrupted request. Never start
+  // a BLE connect here, and never send a motor command from this watch.
+  async function syncBridgeState() {
+    if (syncingBridge || connectingBridge || document.visibilityState === 'hidden') return;
+    if (amSpectator()) return;
+    const key = ($('#bridgeKey').value || '').trim();
+    if (!key) return;
+    syncingBridge = true;
+    try {
+      const health = await hardwareRequest('/health', null, 5000);
+      if (health?.connected && !connected && !OP.Safety.state().estopped) {
+        setConnectedUI(true);
+        $('#oziEstopBanner').hidden = true;
+        $('#oziEStop').hidden = false;
+        $('#surfaceReadout').textContent = health.surface || 'waiting';
+        toast('Evo body found', 'The bridge was already connected, so Ozi is ready.');
+      } else if (!health?.connected && connected) {
+        showBridgeLostState();
+      }
+    } catch {
+      // A health miss is transient while the local bridge or browser permission
+      // prompt wakes up. The next visible check or explicit CONNECT gives the
+      // child a clear, recoverable path.
+    } finally { syncingBridge = false; }
+  }
+
   async function connectBridge() {
     if (connectingBridge) return;
     if (amSpectator()) return toast('Another window is driving', 'Close the other OziPet tab first — one robot, one driver.');
     const key = $('#bridgeKey').value.trim();
     if (!key) return toast('Bridge key missing', 'Run bridge/ozopet_bridge.py and paste the key it prints.');
-      connectingBridge = true;
-      try {
-        const health = await hardwareRequest('/health');
-        if (!health.ok) throw new Error('bridge health check failed');
-        // Real BLE connects can take ~20s and occasionally longer; the bridge
-        // now auto-retries with settle time (council C10), so give it room.
-        toast('Reaching the Evo…', 'Bluetooth handshakes can take up to a minute. Keep the robot close and the official Ozobot Editor closed.');
-        const result = await hardwareRequest('/connect', {}, 120000);
-        setConnectedUI(!!result.connected);
+    connectingBridge = true;
+    const btn = $('#connectBridge');
+    const oldLabel = btn?.textContent || 'CONNECT TO LOCAL BRIDGE';
+    if (btn) { btn.disabled = true; btn.textContent = 'CONNECTING…'; }
+    // CONNECT is an explicit user action, so it is also the clear way out of
+    // the ALL STOPPED latch. Passive health reconciliation never clears it.
+    OP.Safety.reset();
+    try {
+      const health = await hardwareRequest('/health');
+      if (!health.ok) throw new Error('bridge health check failed');
+      // If another request/tab already attached Evo, adopt that live bridge
+      // session instead of asking the BLE stack to handshake a second time.
+      // Real BLE connects can take ~20s and occasionally longer; the bridge
+      // now auto-retries with settle time (council C10), so give it room.
+      const result = health.connected
+        ? health
+        : await (toast('Reaching the Evo…', 'Bluetooth handshakes can take up to a minute. Keep the robot close and the official Ozobot Editor closed.'), hardwareRequest('/connect', {}, 120000));
+      if (!result?.connected) throw new Error('The Evo did not answer the bridge.');
+      setConnectedUI(true);
+      $('#oziEstopBanner').hidden = true;
       try { OP.Games?.stopAll?.(); } catch {} // fresh session never inherits a stale mission (2026-08-22e)
       $('#surfaceReadout').textContent = result.surface || 'waiting';
       toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
@@ -348,7 +404,10 @@
     } catch (err) {
       setConnectedUI(false);
       toast('Bridge did not connect', humanError(err));
-    } finally { connectingBridge = false; }
+    } finally {
+      connectingBridge = false;
+      if (btn) { btn.disabled = false; btn.textContent = oldLabel; }
+    }
   }
 
   async function disconnectBridge() {
@@ -358,6 +417,14 @@
     $('#oziEStop').hidden = true;
     toast('Hardware detached', 'Ozi is back in simulation-only mode.');
   }
+
+  // Keep a stale/reloaded tab in step with the bridge without ever initiating
+  // BLE work or motion on its own. The explicit CONNECT button remains the
+  // only path that starts a new radio handshake.
+  setInterval(syncBridgeState, 7000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') setTimeout(syncBridgeState, 120);
+  });
 
   async function hardwareAction(action, payload = {}) {
     if (!connected) throw new Error('hardware not connected');
