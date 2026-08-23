@@ -162,6 +162,9 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--blue);outline-o
 .mission-start:hover{transform:translate(2px,2px);box-shadow:0 0 0 var(--ink)}
 .floor-stamp{position:absolute;right:9px;top:9px;background:var(--orange);color:#fff;border:2px solid var(--ink);padding:2px 6px;font:700 7px var(--space);letter-spacing:.1em;transform:rotate(3deg)}
 .game-stage{margin-top:15px;border:var(--line);background:var(--ink);color:var(--paper-2);padding:15px 16px;min-height:130px;box-shadow:7px 7px 0 var(--blue)}
+.stage-abort{margin-top:12px;display:flex;justify-content:flex-end}
+.stage-abort button{border:2px solid #fff;background:transparent;color:#ffb3a4;padding:8px 14px;font:700 10px var(--space);letter-spacing:.1em;cursor:pointer}
+.stage-abort button:hover{background:#e2543f;color:#fff}
 .stage-line{margin:0 0 6px;font:600 10.5px/1.65 var(--mono)}
 .stage-line.big{font:700 14px/1.4 var(--space);letter-spacing:.03em}
 .stage-line.win{color:var(--green)}
@@ -197,7 +200,9 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--blue);outline-o
 /* emergency stop + banner */
 .estop{position:fixed;right:22px;top:22px;z-index:300;width:116px;height:116px;border-radius:50%;border:4px solid var(--ink);background:var(--orange);color:#fff;font:400 23px var(--display);text-transform:uppercase;box-shadow:11px 11px 0 rgba(21,21,21,.85);padding:0;overflow:hidden}.estop img{display:block;width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;user-select:none}
 .estop:hover{transform:translate(2px,2px);box-shadow:7px 7px 0 rgba(21,21,21,.85)}
-.estop-banner{position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:310;display:flex;gap:14px;align-items:center;background:var(--orange);color:#fff;border:3px solid var(--ink);box-shadow:7px 7px 0 var(--ink);padding:12px 16px;font:700 10px var(--space);letter-spacing:.07em;max-width:calc(100vw - 30px)}.estop-banner[hidden]{display:none}
+/* Estop banner sits BELOW the top-right STOP button and masthead chips so it
+   never covers any control (2026-08-22e kid feedback). */
+.estop-banner{position:fixed;left:50%;top:158px;transform:translateX(-50%);z-index:310;display:flex;gap:14px;align-items:center;background:var(--orange);color:#fff;border:3px solid var(--ink);box-shadow:7px 7px 0 var(--ink);padding:12px 16px;font:700 10px var(--space);letter-spacing:.07em;max-width:min(680px,calc(100vw - 32px))}.estop-banner[hidden]{display:none}
 .estop-banner button{border:2px solid #fff;background:transparent;color:#fff;padding:6px 9px;font:700 9px var(--space);letter-spacing:.08em}
 
 /* memory feed kind styling + anim classes on #ozi */
@@ -218,6 +223,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--blue);outline-o
   .cam-frame{grid-template-columns:1fr}
   #oziCamVideo{max-height:230px}
   .estop{width:94px;height:94px;font-size:18px;right:12px;top:12px;box-shadow:7px 7px 0 rgba(21,21,21,.85)}
+  .estop-banner{top:122px}
   .cassette-row,.song-row{grid-template-columns:32px 1fr;grid-auto-rows:auto}
   .row-play{grid-column:1/-1}
 }

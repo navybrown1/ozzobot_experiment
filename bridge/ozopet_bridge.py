@@ -16,6 +16,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import secrets
 import sys
 import threading
@@ -41,6 +42,22 @@ PALETTE = {
     "blue": (0.49, 0.86, 1.0),
     "off": (0.0, 0.0, 0.0),
 }
+
+_HEX_RE = re.compile(r"#?([0-9a-fA-F]{6})\Z")
+
+
+def resolve_color(name: str) -> tuple[float, float, float]:
+    """PALETTE name first; `#rrggbb` hex second (2026-08-22e: the web client
+    sends hex from its choreography palette — before this, every hex silently
+    rendered as mint and dance light-shows were invisible)."""
+    text = str(name).strip().lower()
+    if text in PALETTE:
+        return PALETTE[text]
+    m = _HEX_RE.fullmatch(text)
+    if m:
+        v = int(m.group(1), 16)
+        return ((v >> 16 & 255) / 255.0, (v >> 8 & 255) / 255.0, (v & 255) / 255.0)
+    return PALETTE["mint"]
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -469,14 +486,13 @@ class RobotController:
 
     def led(self, name: str) -> dict[str, Any]:
         self._require()
-        name = name if name in PALETTE else "mint"
-        rgb = PALETTE[name]
+        rgb = resolve_color(name)
         if not self.simulate:
             LEDMask = self._imports["LEDMask"]
             RawColor = self._imports["RawColor"]
             evo = self.evo
             self._sdk_call(evo.set_led(LEDMask.ALL_ROBOT, RawColor(*rgb)))
-        return {"ok": True, "action": "led", "color": name}
+        return {"ok": True, "action": "led", "color": str(name)}
 
     def tone(self, frequency: float, duration: float) -> dict[str, Any]:
         self._require()

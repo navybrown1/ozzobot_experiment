@@ -249,26 +249,35 @@
       return { ok: true, simulated: true };
     }
 
-    const floorOK = source === 'gesture' || safety.floorConfirmed;
+    // Motion policy (2026-08-22e, kid-feedback tuning):
+    // - translation ALWAYS requires FLOOR mode + the clear-floor confirmation,
+    //   no matter who asks (a fresh click alone is not floor consent);
+    // - spins-in-place translate nothing, so user-initiated (gesture) tricks
+    //   get show-off angles: ±90° on the desk, ±180° on confirmed floor.
+    //   Autonomy keeps the timid legacy limits (±20° desk / ±45° floor).
+    const gest = source === 'gesture';
     const out = [];
-    let budget = 9000;
+    let budget = 7500;                                             // stay under the bridge's 8s wall clock
     for (let i = 0; i < steps.length; i++) {
       if (out.length >= 16) break;                                 // bridge contract: never send more than 16 steps
       const st = steps[i];
       if (st.move) {
-        if (safety.mode !== 'floor' || !floorOK) continue;           // desk mode: no translation, ever
+        if (safety.mode !== 'floor' || !safety.floorConfirmed) continue; // translation needs real confirmation
         if (proximityBlocked()) {                                    // contract: obstacle in front ⇒ skip movement
           Bus.emit('thought', { text: 'Something is right in front of me. Holding position.', mood: 'nervous' });
           continue;
         }
-        st.move.distance = clamp(st.move.distance, -STEP_RANGES.moveDist[1], STEP_RANGES.moveDist[1]);
-        budget -= Math.abs(st.move.distance) / Math.max(st.move.speed, 1) * 1000 + 250;
+        const moveLim = gest ? 80 : STEP_RANGES.moveDist[1];
+        st.move.distance = clamp(st.move.distance, -moveLim, moveLim);
+        budget -= Math.abs(st.move.distance) / Math.max(st.move.speed, 1) * 1000 + 350;
       }
       if (st.turn) {
-        const lim = safety.mode === 'floor' && floorOK ? STEP_RANGES.turnAngleFloor[1] : STEP_RANGES.turnAngleDesk[1];
+        const lim = safety.mode === 'floor'
+          ? (gest ? 180 : STEP_RANGES.turnAngleFloor[1])
+          : (gest ? 90 : STEP_RANGES.turnAngleDesk[1]);
         st.turn.angle = clamp(st.turn.angle, -lim, lim);
-        if (Math.abs(st.turn.angle) < 3 && !floorOK) continue;       // ignore micro-noise when not confirmed
-        if (st.move === undefined) budget -= Math.abs(st.turn.angle) / Math.max(st.turn.speed, 1) * 1000 + 250;
+        if (Math.abs(st.turn.angle) < 3 && !gest) continue;          // ignore micro-noise from autonomy
+        if (st.move === undefined) budget -= Math.abs(st.turn.angle) / Math.max(st.turn.speed, 1) * 1000 + 350;
       }
       if ((st.move || st.turn) && out.length && (out[out.length - 1].move || out[out.length - 1].turn)) {
         if (out.length < 15) {                                       // gap must leave room for the next step too
@@ -333,6 +342,12 @@
     confirmFloor() { safety.floorConfirmed = true; safety.mode = 'floor'; Bus.emit('mode', { mode: 'floor' }); },
     revokeFloor() { safety.floorConfirmed = false; safety.mode = 'desk'; Bus.emit('mode', { mode: 'desk' }); },
     estop, reset() { safety.estopped = false; },
+    // Best-effort motion cancel WITHOUT the estop latch — used by mission
+    // abort so a running sequence stops between steps but the session lives.
+    halt() {
+      bridgeFetch('/stop', { body: {} }, 2500).catch(() => {});
+      return { ok: true };
+    },
     setKeyProvider(fn) { if (typeof fn === 'function') bridgeKeyProvider = fn; },
     execSteps,
     isBusy: () => safety.executing,
@@ -629,6 +644,7 @@
 
   function startBedtime(fromUser) {
     const s = state(), P = deps.Perform;
+    try { if (deps.Games && typeof deps.Games.stopAll === 'function') deps.Games.stopAll(); } catch {} // bedtime cancels any mission (2026-08-22e)
     s.awake = false;
     moveToZone('nest');
     Bus.emit('led', { color: '#7ddcff' }); Bus.emit('anim', { name: 'nod', ms: 1400 });

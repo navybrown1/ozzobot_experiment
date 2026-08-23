@@ -22,7 +22,7 @@
   const TONE_MIN = 180, TONE_MAX = 1600, TONE_DMIN = 0.03, TONE_DMAX = 0.35;
   const MOVE_MAX = 120, MOVE_SMIN = 20, MOVE_SMAX = 80;
   const TURN_MAX = 180, TURN_SMIN = 30, TURN_SMAX = 120;
-  const WAIT_MAX = 1.5, ROUTINE_CAP = 16, ROUTINE_TIME_MAX = 9;
+  const WAIT_MAX = 1.5, ROUTINE_CAP = 16, ROUTINE_TIME_MAX = 7.5;
 
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const num = (v, f) => { if (typeof v === 'boolean') return f; const n = Number(v); return Number.isFinite(n) ? n : f; };
@@ -65,7 +65,10 @@
       const clean = S(s);
       if (!clean) continue;
       // Same cost model as wallTime — keep builds inside the planner's pacing.
-      const cost = (clean.wait || 0) + (clean.tone ? clean.tone.duration || 0 : 0) + ((clean.move || clean.turn) ? 0.45 : 0);
+      // Motor cost 0.65s ≈ real BLE round-trip + the breathing gap Safety
+      // inserts between adjacent motor steps (was 0.45 and chronically
+      // under-estimated, so the bridge's 8s wall clock truncated routines).
+      const cost = (clean.wait || 0) + (clean.tone ? clean.tone.duration || 0 : 0) + ((clean.move || clean.turn) ? 0.65 : 0);
       if (out.length && t + cost > ROUTINE_TIME_MAX) break;
       out.push(clean);
       t += cost;
@@ -80,7 +83,7 @@
       if (!s) continue;
       t += s.wait || 0;
       if (s.tone) t += s.tone.duration || 0;
-      if (s.move || s.turn) t += 0.45;
+      if (s.move || s.turn) t += 0.65;
     }
     return t;
   }
@@ -88,10 +91,10 @@
   const prims = {
     wiggle() {
       return routine([
-        { turn: { angle: 22, speed: 95 } }, { turn: { angle: -22, speed: 95 } },
-        { turn: { angle: 16, speed: 95 } }, { turn: { angle: -16, speed: 95 } },
-        { turn: { angle: 22, speed: 95 } }, { turn: { angle: -22, speed: 95 } },
-        { turn: { angle: 16, speed: 95 } }, { turn: { angle: -16, speed: 95 } }
+        { turn: { angle: 45, speed: 95 } }, { turn: { angle: -45, speed: 95 } },
+        { turn: { angle: 32, speed: 95 } }, { turn: { angle: -32, speed: 95 } },
+        { turn: { angle: 45, speed: 95 } }, { turn: { angle: -45, speed: 95 } },
+        { turn: { angle: 32, speed: 95 } }, { turn: { angle: -32, speed: 95 } }
       ]);
     },
     spin(dir) {
@@ -103,17 +106,17 @@
     },
     shimmy() {
       return routine([
-        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } },
-        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } },
-        { turn: { angle: 12, speed: 120 } }, { turn: { angle: -12, speed: 120 } }
+        { turn: { angle: 26, speed: 120 } }, { turn: { angle: -26, speed: 120 } },
+        { turn: { angle: 26, speed: 120 } }, { turn: { angle: -26, speed: 120 } },
+        { turn: { angle: 26, speed: 120 } }, { turn: { angle: -26, speed: 120 } }
       ]);
     },
     bounce() {
       return routine([
-        { move: { distance: 48, speed: 60 } }, { wait: 0.06 },
-        { move: { distance: -48, speed: 60 } }, { tone: { frequency: 523, duration: 0.06 } },
-        { move: { distance: 48, speed: 60 } }, { wait: 0.06 },
-        { move: { distance: -48, speed: 60 } }, { tone: { frequency: 659, duration: 0.08 } }
+        { move: { distance: 60, speed: 60 } }, { wait: 0.06 },
+        { move: { distance: -60, speed: 60 } }, { tone: { frequency: 523, duration: 0.06 } },
+        { move: { distance: 60, speed: 60 } }, { wait: 0.06 },
+        { move: { distance: -60, speed: 60 } }, { tone: { frequency: 659, duration: 0.08 } }
       ]);
     },
     approach(mm, speed) {
@@ -155,11 +158,11 @@
       desc: 'Left, right, forward, back - a rhythmic box step with its own built-on melody.',
       melody: [[440, 0.11], [554, 0.11], [659, 0.11], [554, 0.11], [440, 0.11], [330, 0.16]],
       build: () => [
-        { led: 'violet' }, { turn: { angle: 28, speed: 75 } }, ...prims.approach(70),
-        { turn: { angle: -28, speed: 75 } }, ...prims.retreat(70),
-        { turn: { angle: 28, speed: 80 } }, ...prims.approach(70),
-        { turn: { angle: -28, speed: 80 } }, ...prims.retreat(70),
-        { turn: { angle: 28, speed: 85 } }, ...prims.approach(70),
+        { led: 'violet' }, { turn: { angle: 50, speed: 75 } }, ...prims.approach(80),
+        { turn: { angle: -50, speed: 75 } }, ...prims.retreat(80),
+        { turn: { angle: 50, speed: 80 } }, ...prims.approach(80),
+        { turn: { angle: -50, speed: 80 } }, ...prims.retreat(80),
+        { turn: { angle: 50, speed: 85 } }, ...prims.approach(80),
         { tone: { frequency: 659, duration: 0.09 } }
       ]
     },
@@ -168,10 +171,10 @@
       desc: 'Short fast bursts out and back with sharp scanning turns between. Pure unfiltered energy.',
       melody: [[988, 0.05], [1175, 0.05], [988, 0.05], [1319, 0.07], [988, 0.05], [1175, 0.05]],
       build: () => [
-        { led: 'mint' }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
-        { turn: { angle: 30, speed: 110 } }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
-        { turn: { angle: -30, speed: 110 } }, ...prims.approach(55, 80), ...prims.retreat(55, 80),
-        { turn: { angle: 90, speed: 110 } }, { tone: { frequency: 988, duration: 0.06 } }
+        { led: 'mint' }, ...prims.approach(75, 80), ...prims.retreat(75, 80),
+        { turn: { angle: 60, speed: 110 } }, ...prims.approach(75, 80), ...prims.retreat(75, 80),
+        { turn: { angle: -60, speed: 110 } }, ...prims.approach(75, 80), ...prims.retreat(75, 80),
+        { turn: { angle: 120, speed: 110 } }, { tone: { frequency: 988, duration: 0.06 } }
       ]
     },
     {
@@ -190,9 +193,9 @@
       desc: 'Creeps in on a slow dim turn, holds a long pause... then a sudden chirp and a confident approach.',
       melody: [[220, 0.3], [262, 0.12], [330, 0.12], [1047, 0.1], [1319, 0.16]],
       build: () => [
-        { led: 'blue' }, { turn: { angle: 45, speed: 35 } }, { wait: 0.7 },
+        { led: 'blue' }, { turn: { angle: 70, speed: 35 } }, { wait: 0.7 },
         { led: 'violet' }, { tone: { frequency: 196, duration: 0.28 } }, { tone: { frequency: 392, duration: 0.08 } },
-        { led: 'amber' }, ...prims.approach(70, 70)
+        { led: 'amber' }, ...prims.approach(80, 70)
       ]
     },
     {
@@ -442,7 +445,10 @@
     const firstLed = (steps.find(s => s.led) || {}).led || PALETTE[d.color] || PALETTE.mint;
     emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    if (!hwConnected) playNotes(d.melody);
+    // Browser melody always plays (2026-08-22e): the Evo's tiny beeps were
+    // inaudible across a room, so kids heard "no music". Computer speakers
+    // carry the tune; the robot's tone steps layer on top as the beat.
+    playNotes(d.melody);
     const res = await execViaSafety(steps, 'dance:' + d.id);
     return { ok: !res.error, simulated: !!res.simulated, name: d.id, title: d.title, steps: steps.length, error: res.error || null };
   }
@@ -458,9 +464,8 @@
     const firstLed = (steps.find(s => s.led) || {}).led;
     if (firstLed) emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    // Same rule as dance()/song(): when the robot body is attached its own
-    // tone steps are the music — a simultaneous browser melody would double it.
-    if (!(Safety && Safety.state && Safety.state().connected)) playNotes(e.melody);
+    // Always-on browser melody — same reasoning as dance() (2026-08-22e).
+    playNotes(e.melody);
     const res = await execViaSafety(steps, 'express:' + name);
     return { ok: !res.error, simulated: !!res.simulated, name, error: res.error || null };
   }
@@ -480,7 +485,8 @@
     const firstLed = (steps.find(x => x.led) || {}).led;
     if (firstLed) emit('led', { color: firstLed });
     scheduleLedSync(steps);
-    if (!(Safety && Safety.state && Safety.state().connected)) playNotes(s.notes);
+    // Always-on browser melody — same reasoning as dance() (2026-08-22e).
+    playNotes(s.notes);
     const res = await execViaSafety(steps, 'song:' + s.id);
     return { ok: !res.error, simulated: !!res.simulated, name: s.id, title: s.title, steps: steps.length, error: res.error || null };
   }

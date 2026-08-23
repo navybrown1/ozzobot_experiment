@@ -38,7 +38,7 @@ keys; execution order within a step is fixed: `led` → `tone` → `move` →
 | Parameter        | Range            | Out-of-range behavior            |
 |------------------|------------------|----------------------------------|
 | `steps` count    | 0..16            | >16 → first 16 run; `truncated: true`, `steps_received` reports original count (2026-08-22: oversized sequences are no longer rejected — a stale client must never sever the radio link) |
-| `led` color name | PALETTE names: `mint`, `violet`, `amber`, `red`, `blue`, `off` | unknown name silently becomes `mint` |
+| `led` color name | PALETTE names (`mint`, `violet`, `amber`, `red`, `blue`, `off`) or `#rrggbb` hex | unknown name silently becomes `mint` |
 | `tone.frequency` | 180..1600        | clamped                          |
 | `tone.duration`  | 0.03..0.35 s     | clamped                          |
 | `move.distance`  | -120..120 mm     | clamped                          |

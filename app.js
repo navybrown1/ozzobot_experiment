@@ -244,6 +244,7 @@
   function onEstop(data) {
     OP.Follow?.stop?.();
     stopPreview();
+    try { OP.Games?.stopAll?.(); } catch {} // a dead session must not keep a mission alive (2026-08-22e)
     $('#oziEStop').hidden = true;
     $('#oziEstopBanner').hidden = false;
     $('#oziEstopReason').textContent = data?.reason ? `— ${kidStopReason(data.reason)}` : '— Ozi stopped moving to stay safe.';
@@ -334,6 +335,7 @@
       // Real BLE connects can take up to ~20s (observed); give the bridge room.
       const result = await hardwareRequest('/connect', {}, 30000);
       setConnectedUI(!!result.connected);
+      try { OP.Games?.stopAll?.(); } catch {} // fresh session never inherits a stale mission (2026-08-22e)
       $('#surfaceReadout').textContent = result.surface || 'waiting';
       toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
       if (connected) {
@@ -349,6 +351,7 @@
 
   async function disconnectBridge() {
     try { if (connected) await hardwareRequest('/disconnect', {}, 12000); } catch {}
+    try { OP.Games?.stopAll?.(); } catch {} // disconnect cancels any running mission (2026-08-22e)
     setConnectedUI(false);
     $('#oziEStop').hidden = true;
     toast('Hardware detached', 'Ozi is back in simulation-only mode.');
@@ -532,6 +535,16 @@
   function stage(html) { const s = $('#gameStage'); if (s) s.innerHTML = html; }
   const stageLine = (text, cls = '') => `<p class="stage-line ${cls}">${escapeHTML(text)}</p>`;
 
+  // Mission abort bar (2026-08-22e): every phase render appends it while a
+  // mission is live, so "abort" always has a visible button.
+  function abortBar() {
+    if (!OP.Games.busy()) return '';
+    return `<div class="stage-abort"><button type="button" data-abort-mission>ABORT MISSION</button></div>`;
+  }
+  function renderStageWithAbort(html) {
+    stage(html + abortBar());
+  }
+
   function simonGlyph(entry) {
     const colorHex = getColor(entry.color);
     return `<span class="simon-glyph" style="--swatch:${colorHex}">${entry.direction === 'left' ? '◀' : entry.direction === 'right' ? '▶' : '●'}</span>`;
@@ -557,38 +570,51 @@
 
   function renderGamePhase(p) {
     if (!p || typeof p !== 'object') return;
+    const S = renderStageWithAbort;
     switch (p.phase) {
-      case 'start': stage(stageLine(`MISSION STARTED // ${p.game}`, 'big')); break;
-      case 'watch': stage(stageLine(`WATCH THE PATTERN — round ${p.round}/${p.totalRounds || 3}`, 'big') + `<div class="simon-seq">${(p.seq || []).map(simonGlyph).join('')}</div>`); break;
+      case 'start': S(stageLine(`MISSION STARTED // ${p.game}`, 'big')); break;
+      case 'watch': S(stageLine(`WATCH THE PATTERN — round ${p.round}/${p.totalRounds || 3}`, 'big') + `<div class="simon-seq">${(p.seq || []).map(simonGlyph).join('')}</div>`); break;
       case 'input': showInputPad(p.round); break;
-      case 'result': stage(stageLine(p.won ? `FLAWLESS — round ${p.round} cleared.` : `Pattern collapsed at round ${p.round}. Ozi is being gracious about it. Probably.`, p.won ? 'win' : 'bad')); break;
-      case 'state': stage(`<div class="lamp ${p.light}"></div>` + stageLine(p.light === 'green' ? 'GREEN — Ozi wiggles.' : 'RED — freeze!', 'big')); break;
-      case 'end': stage(stageLine(p.caught ? `Caught mid-wiggle ${p.caughtTimes || ''}time(s). Confidence shaken, comedy intact.` : `Clean rounds won: ${p.wins}. Suspicious discipline.`)); break;
-      case 'party': stage(stageLine(`NOW PLAYING: ${p.track}`, 'violet')); break;
-      case 'seek': stage(stageLine(`FIND: ${p.label} — place Evo on the ${p.color} card`, 'big') + (p.retry ? stageLine('not it. suspicious. try again.') : '')); break;
-      case 'found': stage(stageLine(p.msg || (p.matched ? `FOUND IT — surface reads ${p.surface}.` : `Surface reads ${p.surface}. Not the one.`))); break;
-      case 'summary': stage(stageLine(`Hunt complete: ${p.matched}/${p.total} colors confirmed.`)); break;
-      case 'box': stage(stageLine(`MYSTERY BOX: ${p.surface} → ${p.outcome}`, 'violet')); break;
-      case 'patrol': stage(stageLine(`GUARDING — ${p.sec}s left on shift.`)); break;
-      case 'alert': stage(stageLine(`PROXIMITY ALERT — something at ${p.side}. Guarding works.`, 'bad')); break;
-      case 'countdown': stage(stageLine(p.n > 0 ? `HIDING IN… ${p.n}` : 'READY OR NOT…', 'big')); break;
+      case 'result': S(stageLine(p.won ? `FLAWLESS — round ${p.round} cleared.` : `Pattern collapsed at round ${p.round}. Ozi is being gracious about it. Probably.`, p.won ? 'win' : 'bad')); break;
+      case 'state': S(`<div class="lamp ${p.light}"></div>` + stageLine(p.light === 'green' ? 'GREEN — Ozi wiggles.' : 'RED — freeze!', 'big')); break;
+      case 'end': S(stageLine(p.caught ? `Caught mid-wiggle ${p.caughtTimes || ''}time(s). Confidence shaken, comedy intact.` : `Clean rounds won: ${p.wins}. Suspicious discipline.`)); break;
+      case 'party': S(stageLine(`NOW PLAYING: ${p.track}`, 'violet')); break;
+      case 'seek': S(stageLine(`FIND: ${p.label} — place Evo on the ${p.color} card`, 'big') + (p.retry ? stageLine('not it. suspicious. try again.') : '')); break;
+      case 'found': S(stageLine(p.msg || (p.matched ? `FOUND IT — surface reads ${p.surface}.` : `Surface reads ${p.surface}. Not the one.`))); break;
+      case 'summary': S(stageLine(`Hunt complete: ${p.matched}/${p.total} colors confirmed.`)); break;
+      case 'box': S(stageLine(`MYSTERY BOX: ${p.surface} → ${p.outcome}`, 'violet')); break;
+      case 'patrol': S(stageLine(`GUARDING — ${p.sec}s left on shift.`)); break;
+      case 'alert': S(stageLine(`PROXIMITY ALERT — something at ${p.side}. Guarding works.`, 'bad')); break;
+      case 'countdown': S(stageLine(p.n > 0 ? `HIDING IN… ${p.n}` : 'READY OR NOT…', 'big')); break;
       case 'found2': case 'found-seek': break;
-      case 'stopped': stage(stageLine('Mission aborted. No further questions.')); break;
-      case 'error': stage(stageLine(`Mission error: ${p.detail || 'unknown'}`, 'bad')); break;
-      case 'msg': stage(stageLine(p.msg || '')); break;
+      case 'stopped': S(stageLine('Mission aborted. No further questions.')); break;
+      case 'error': S(stageLine(`Mission error: ${p.detail || 'unknown'}`, 'bad')); break;
+      case 'msg': S(stageLine(p.msg || '')); break;
       default:
-        if (p.msg) stage(stageLine(p.msg));
+        if (p.msg) S(stageLine(p.msg));
+    }
+    // The Simon input pad replaces the whole stage; re-append the abort bar
+    // there too so an abort button is visible in EVERY live phase.
+    if (p.phase === 'input') {
+      const s = $('#gameStage');
+      if (s && OP.Games.busy()) s.insertAdjacentHTML('beforeend', abortBar());
     }
   }
 
+  function abortMission() {
+    try { OP.Safety?.halt?.(); } catch {}
+    OP.Games.stopAll();
+    toast('Mission aborted', 'Ozi is free. Pick anything else to play.');
+  }
+
   async function launchMission(id) {
-    if (OP.Games.busy()) return toast('Already playing', 'One mission at a time — abort the current one first.');
+    if (OP.Games.busy()) return toast('Already playing', 'One mission at a time — press ABORT MISSION on the stage below first.');
     try {
       const result = await OP.Games.start(id);
-      if (result && result.ok === false) stage(stageLine(`Mission declined by the engine: ${result.error || 'unknown'}`, 'bad'));
+      if (result && result.ok === false && !result.aborted) renderStageWithAbort(stageLine(`Mission declined by the engine: ${result.error || 'unknown'}`, 'bad'));
       renderAll();
     } catch (err) {
-      stage(stageLine(String(err?.message || err), 'bad'));
+      renderStageWithAbort(stageLine(String(err?.message || err), 'bad'));
     }
   }
 
@@ -698,9 +724,19 @@
 
     $$('[data-led]').forEach(btn => btn.addEventListener('click', async () => {
       if (!connected) return toast('No real body yet', 'Connect the bridge before testing LEDs.');
-      try { await hardwareAction('led', { color: btn.dataset.led }); setLed(getColor(btn.dataset.led)); }
+      try {
+        // LED + a matching beep through Safety so every swatch gives audible
+        // AND visible feedback on the robot (2026-08-22e kid feedback).
+        await OP.Safety.execSteps([{ led: btn.dataset.led }, { tone: { frequency: 740, duration: 0.09 } }], { source: 'gesture', label: 'swatch' });
+        setLed(getColor(btn.dataset.led));
+      }
       catch (e) { hardwareSoftFail(e); }
     }));
+
+    // Mission abort (delegated — the bar is re-rendered with every phase).
+    $('#gameStage')?.addEventListener('click', ev => {
+      if (ev.target.closest('[data-abort-mission]')) abortMission();
+    });
 
     $('#readColorButton').addEventListener('click', async () => {
       if (!ENGINE) return;
