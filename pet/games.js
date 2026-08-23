@@ -96,6 +96,18 @@
 
   function busy() { return !!(cur && !cur.dead); }
 
+  function clearStaleRun() {
+    if (!busy()) return false;
+    const S = saf();
+    const state = S && typeof S.state === 'function' ? S.state() : null;
+    const banner = typeof document !== 'undefined' ? document.getElementById('oziEstopBanner') : null;
+    if (state && (state.estopped || (banner && !banner.hidden))) {
+      stopAll();
+      return true;
+    }
+    return false;
+  }
+
   function input(game, value) {
     const c = cur;
     if (!c || c.dead || c.id !== game) return false;
@@ -642,6 +654,7 @@
     start: start,
     input: input,
     stopAll: stopAll,
+    clearStaleRun: clearStaleRun,
     busy: busy,
     activeGame: () => (cur ? cur.id : null)
   };

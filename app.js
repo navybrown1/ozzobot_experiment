@@ -83,6 +83,14 @@
     }
   }
 
+  function selectZoneButton(zoneName) {
+    $$('[data-zone]').forEach(btn => {
+      const selected = btn.dataset.zone === zoneName;
+      btn.classList.toggle('zone-selected', selected);
+      btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+  }
+
   /* ================= rendering from engine snapshot ================= */
   const bondLabel = n => n >= 92 ? 'trusted person' : n >= 82 ? 'chosen human' : n >= 70 ? 'growing bond' : n >= 55 ? 'new friend' : 'under review';
   const relationshipThought = t => t > 90 ? 'Ozi expects you to return, bring interesting things, and prevent obviously bad desk decisions.'
@@ -264,6 +272,18 @@
     if (snap) { renderAll(); } else { $('#connectionOrb')?.classList.toggle('connected', connected); }
   }
 
+  // Reattaching a real Evo must not silently resume autonomous motion from a
+  // stale Living Mode preference. The user can explicitly turn it back on.
+  function keepRealBodyQuiet() {
+    if (!ENGINE) return;
+    const state = OP.Core.getState?.();
+    if (!state || !state.living) return;
+    state.living = false;
+    OP.Store.saveSoon();
+    renderAll();
+    toast('Quiet mode on', 'Real body attached. Ozi will wait for your explicit controls.');
+  }
+
   async function hardwareRequest(path, body = null, timeoutMs = 6000) {
     const key = ($('#bridgeKey').value || '').trim();
     const headers = { 'Content-Type': 'application/json', 'X-OzoPet-Key': key };
@@ -354,6 +374,7 @@
       const health = await hardwareRequest('/health', null, 5000);
       if (health?.connected && !connected && !OP.Safety.state().estopped) {
         setConnectedUI(true);
+        keepRealBodyQuiet();
         $('#oziEstopBanner').hidden = true;
         $('#oziEStop').hidden = false;
         $('#surfaceReadout').textContent = health.surface || 'waiting';
@@ -392,6 +413,7 @@
         : await (toast('Reaching the Evo…', 'Bluetooth handshakes can take up to a minute. Keep the robot close and the official Ozobot Editor closed.'), hardwareRequest('/connect', {}, 120000));
       if (!result?.connected) throw new Error('The Evo did not answer the bridge.');
       setConnectedUI(true);
+      keepRealBodyQuiet();
       $('#oziEstopBanner').hidden = true;
       try { OP.Games?.stopAll?.(); } catch {} // fresh session never inherits a stale mission (2026-08-22e)
       $('#surfaceReadout').textContent = result.surface || 'waiting';
@@ -677,6 +699,7 @@
   }
 
   async function launchMission(id) {
+    try { OP.Games?.clearStaleRun?.(); } catch {}
     if (OP.Games.busy()) return toast('Already playing', 'One mission at a time — press ABORT MISSION on the stage below first.');
     try {
       const result = await OP.Games.start(id);
@@ -732,7 +755,8 @@
     $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
       if (snap && !snap.awake) return toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
       const z = btn.dataset.zone;
-      moveVisuals(z); setLed((zones[z] || zones.center).color);
+      selectZoneButton(z);
+      moveVisuals(z); setLed((zones[z] || zones.center).color); animate('bop', 500);
       if (ENGINE) {
         OP.Core.applyNeeds({ curiosity: -2, boredom: -5 });
         OP.Core.addMemory(`Was directed toward ${zoneLabel(z)}.`);
@@ -949,6 +973,7 @@
     wireBus();
     snap = OP.Core.snapshot();
     moveVisuals(snap.zone || 'nest');
+    selectZoneButton(snap.zone || 'nest');
     renderAll();
     renderDanceDeck();
     renderSongbook();

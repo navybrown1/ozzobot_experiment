@@ -73,6 +73,20 @@ cd bridge
 .venv/bin/python ozopet_bridge.py
 ```
 
+For a bridge that starts automatically at login and restarts after a crash on
+macOS, install the included per-user LaunchAgent:
+
+```bash
+bridge/install-launch-agent.sh
+```
+
+The installer synchronizes the runtime into
+`~/Library/Application Support/OzoPet/bridge` because macOS protects
+`~/Desktop` from background LaunchAgents. Re-run it after changing bridge code
+to refresh the service copy. The service keeps the Hardware Lab key
+`evo-test-key-001` and remains bound to the loopback-only endpoint
+`127.0.0.1:8787`.
+
 Windows (PowerShell) — same script logic manually:
 
 ```powershell
@@ -138,4 +152,3 @@ The product direction is larger than a controller. The Evo becomes a persistent 
 - Ozobot Python SDK, Ari & Evo documentation: https://docs.ozobot.com/python/linefollower/index.html
 - Ozobot synchronous API reference: https://docs.ozobot.com/python/linefollower/sync/apidoc.html
 - `ozobot-evo` package: https://pypi.org/project/ozobot-evo/
-

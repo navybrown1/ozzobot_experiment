@@ -242,6 +242,10 @@
     opts = opts || {};
     const source = opts.source === 'autonomous' ? 'autonomous' : 'gesture';
     if (safety.estopped) return { ok: false, error: 'emergency stop active' };
+    // A click, planner tick, game, or follow update can arrive while the
+    // previous routine is still on the bridge.  Do not create a second
+    // hardware request: one robot can perform only one routine at a time.
+    if (safety.executing) return { ok: false, error: 'Ozi is already performing', refused: true };
     let steps = (Array.isArray(rawSteps) ? rawSteps : []).map(normStep).filter(Boolean);
 
     if (!safety.connected) {
@@ -332,7 +336,10 @@
     if (safety.estopped) return false;
     const reason = String(err?.name === 'AbortError' ? 'timeout' : err?.message || err);
     try {
-      bridgeFetch('/stop', { body: {} }, 2500).catch(() => {});
+      // STOP and CONNECT share the bridge's single hardware queue.  Starting
+      // both at once used to let CONNECT race a pending halt/disconnect and
+      // leave the recovered session marked disconnected.
+      try { await bridgeFetch('/stop', { body: {} }, 2500); } catch {}
       const res = await bridgeFetch('/connect', { body: {} }, 15000);
       if (res && res.ok && res.connected) {
         safety.estopped = false;
@@ -351,8 +358,9 @@
     safety.connected = false;
     safety.executing = false;
     if (Store.state) { Store.state.hardware.connected = false; Store.saveSoon(); }
-    bridgeFetch('/stop', { body: {} }, 2500).catch(() => {});
-    bridgeFetch('/disconnect', { body: {} }, 2500).catch(() => {});
+    bridgeFetch('/stop', { body: {} }, 2500)
+      .catch(() => {})
+      .then(() => bridgeFetch('/disconnect', { body: {} }, 2500).catch(() => {}));
     Bus.emit('estop', { reason });
     Bus.emit('estate', { connected: false, mode: safety.mode });
   }

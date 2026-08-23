@@ -15,7 +15,11 @@ X-OzoPet-Key: <key printed at bridge startup>
 
 Missing/wrong key → `401 {"ok": false, "error": "invalid bridge key"}`.
 The server is multi-threaded (ThreadingHTTPServer), so `POST /stop` can be
-served while a `POST /sequence` is still running.
+served while a `POST /sequence` is still running. A second `POST /sequence`
+while one is active is refused with HTTP 400; it is never queued behind the
+active routine. Background `GET /proximity` calls return the last sample while
+a routine owns the hardware worker, so sensor polling cannot interrupt a
+dance.
 
 ## Step shapes
 
@@ -91,6 +95,14 @@ Response:
 - `steps_executed` = number of step objects actually executed.
 - A `wait` may be shortened near the 8 s budget; the effective seconds slept
   is reported.
+
+On a real Evo, `tone` is acknowledged but intentionally not sent over BLE.
+The browser plays the melody locally; suppressing the SDK's fragile PlayTone
+command keeps cosmetic audio from interrupting movement or missions.
+
+If the BLE link drops during a sequence, the bridge makes one short reconnect
+attempt and reports the routine as safely abandoned. It never replays a
+partially completed routine.
 
 ## Abort semantics
 

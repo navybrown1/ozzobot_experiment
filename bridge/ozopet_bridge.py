@@ -194,6 +194,14 @@ class RobotController:
         self.surface = "unclassified"
         self._imports: dict[str, Any] = {}
         self._abort = False
+        # A routine owns the hardware for its whole duration.  The browser also
+        # polls proximity in the background, so keep that read out of the
+        # hardware queue while a routine is running instead of letting it
+        # time out behind movement and poison the worker.
+        self._sequence_guard = threading.Lock()
+        self._sequence_active = False
+        self._state_lock = threading.Lock()
+        self._last_proximity: dict[str, Any] = {"ok": True, "available": False}
         self._recovery_lock = threading.Lock()
         self._timeout_strikes: list[float] = []
         self._lifetime_timeouts = 0
@@ -305,20 +313,31 @@ class RobotController:
                 and self._is_link_dead(exc)
             ):
                 print(f"[hw {ts()}] LINK LOST during {name} — attempting silent auto-resurrect", flush=True)
+                recovered = False
                 try:
                     self._bury_link()
-                    self._hw.submit(self._connect_impl).result(timeout=self.OP_TIMEOUTS["_connect_impl"])
-                    print(f"[hw {ts()}] auto-resurrect OK — retrying {name}", flush=True)
-                    t1 = time.monotonic()
-                    result = self._hw.submit(fn, *args).result(timeout=timeout)
-                    print(f"[hw {ts()}] done {name} (retried) in {time.monotonic() - t1:.2f}s", flush=True)
-                    return result
+                    self._hw.submit(self._connect_once_for_recovery).result(timeout=20.0)
+                    recovered = True
                 except Exception as resurrect_exc:
                     print(
                         f"[hw {ts()}] auto-resurrect FAILED — giving up so the app sees the real error:\n"
                         f"{resurrect_exc}",
                         flush=True,
                     )
+                if recovered and name == "_sequence_impl":
+                    # A routine may already have moved, turned, or changed an
+                    # LED before the link dropped. Never replay the whole
+                    # routine after recovery; that could duplicate movement.
+                    print(f"[hw {ts()}] auto-resurrect OK — routine abandoned without replay", flush=True)
+                    raise RuntimeError(
+                        "The Evo link recovered, but this routine was stopped safely and will not be replayed."
+                    ) from None
+                if recovered:
+                    print(f"[hw {ts()}] auto-resurrect OK — retrying {name}", flush=True)
+                    t1 = time.monotonic()
+                    result = self._hw.submit(fn, *args).result(timeout=timeout)
+                    print(f"[hw {ts()}] done {name} (retried) in {time.monotonic() - t1:.2f}s", flush=True)
+                    return result
             print(f"[hw {ts()}] FAILED {name}:\n{traceback.format_exc()}", flush=True)
             raise
 
@@ -353,7 +372,19 @@ class RobotController:
             mod = type(cur).__module__ or ""
             if (mod.startswith("bleak") or type(cur).__name__ == "BleakError"):
                 text = str(cur).lower()
-                if "not connected" in text or "disconnect" in text or "closed" in text:
+                # On macOS, Bleak clears its cached GATT services as soon as
+                # CoreBluetooth reports a disconnect. The ozobot SDK then
+                # surfaces the next command as "Service Discovery has not
+                # been performed yet" rather than "Not connected". Treat
+                # both forms as the same stale-link condition so the bridge
+                # can invalidate the handle and recover once, instead of
+                # falsely keeping the browser in CONNECTED state.
+                if (
+                    "not connected" in text
+                    or "disconnect" in text
+                    or "closed" in text
+                    or "service discovery has not been performed" in text
+                ):
                     return True
             cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
         return False
@@ -399,6 +430,19 @@ class RobotController:
     def connect(self) -> dict[str, Any]:
         return self._submit(self._connect_impl)
 
+    def _connect_once_for_recovery(self) -> dict[str, Any]:
+        """Short, non-replaying reconnect used after a mid-operation link drop."""
+        try:
+            self._sdk_call(self._async_connect(), timeout=15.0)
+            # A reconnect is not usable until CoreBluetooth has rebuilt the
+            # GATT tree. Probe with a harmless LED-off write before exposing
+            # the recovered state to the browser.
+            self._probe_hardware_ready()
+            return self.status()
+        except Exception:
+            self._bury_link()
+            raise
+
     def _connect_impl(self) -> dict[str, Any]:
         if self.connected:
             return self.status()
@@ -420,6 +464,7 @@ class RobotController:
         for attempt in range(1, 3):
             try:
                 self._sdk_call(self._async_connect(), timeout=50.0)
+                self._probe_hardware_ready()
                 return self.status()
             except Exception as exc:
                 last_err = exc
@@ -444,6 +489,17 @@ class RobotController:
             self._handle = handle  # assigned BEFORE awaiting so a timeout can be buried
             self.evo = await handle.__aenter__()
         self.connected = True
+
+    def _probe_hardware_ready(self) -> None:
+        """Force BLE service/control discovery before reporting CONNECTED."""
+        if self.simulate or self.fake_ble:
+            return
+        LEDMask = self._imports["LEDMask"]
+        RawColor = self._imports["RawColor"]
+        self._sdk_call(
+            self.evo.set_led(LEDMask.ALL_ROBOT, RawColor(0.0, 0.0, 0.0)),
+            timeout=8.0,
+        )
 
     def disconnect(self) -> dict[str, Any]:
         return self._submit(self._disconnect_impl)
@@ -521,8 +577,11 @@ class RobotController:
         frequency = clamp(require_finite(frequency, "frequency"), 180, 1600)
         duration = clamp(require_finite(duration, "duration"), 0.03, 0.35)
         if not self.simulate:
-            evo = self.evo
-            self._sdk_call(evo.play_tone(int(frequency), duration))
+            # The browser mirrors every melody locally.  PlayTone is disabled
+            # on the real Evo because this SDK/firmware combination can leave
+            # the BLE command stream in FinishedForced or a multi-second hang;
+            # a cosmetic beep must never take down movement or a mission.
+            pass
         else:
             time.sleep(duration)
         return {"ok": True, "action": "tone", "frequency": frequency, "duration": duration}
@@ -592,7 +651,20 @@ class RobotController:
             require_finite(step["wait"], "wait")
 
     def sequence(self, steps: Any) -> dict[str, Any]:
-        return self._submit(self._sequence_impl, steps)
+        # Duplicate routine requests used to queue behind the first routine.
+        # Combined with proximity polling, that could trigger the timeout
+        # recovery path while the robot was still dancing.  Reject duplicates
+        # explicitly and let the active routine finish (or be stopped).
+        if not self._sequence_guard.acquire(blocking=False):
+            raise RuntimeError("A dance routine is already running")
+        with self._state_lock:
+            self._sequence_active = True
+        try:
+            return self._submit(self._sequence_impl, steps)
+        finally:
+            with self._state_lock:
+                self._sequence_active = False
+            self._sequence_guard.release()
 
     def _sequence_impl(self, steps: Any) -> dict[str, Any]:
         if not isinstance(steps, list):
@@ -664,7 +736,16 @@ class RobotController:
             pass
 
     def proximity(self) -> dict[str, Any]:
-        return self._submit(self._proximity_impl)
+        # Never enqueue a read behind a live routine.  Returning the last
+        # sample keeps the safety UI responsive without competing with motion
+        # on the single BLE worker.
+        with self._state_lock:
+            if self._sequence_active:
+                return dict(self._last_proximity)
+        result = self._submit(self._proximity_impl)
+        with self._state_lock:
+            self._last_proximity = dict(result)
+        return result
 
     def _proximity_impl(self) -> dict[str, Any]:
         if self.simulate or not self.connected or self.evo is None:
