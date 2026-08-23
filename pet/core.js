@@ -561,6 +561,14 @@
         s.needs.social = clamp(s.needs.social - 14); s.needs.trust = clamp(s.needs.trust + 1.5); s.needs.boredom = clamp(s.needs.boredom - 9); s.needs.affection = clamp(s.needs.affection + 4);
         Bus.emit('anim', { name: 'bop', ms: 900 }); Bus.emit('led', { color: '#74ffc8' });
         P?.chirp?.('hello');
+        // Drive the real body too (2026-08-22 audit): a mint wave + two up-beats.
+        Safety.execSteps([
+          { led: '#74ffc8' },
+          { tone: { frequency: 523, duration: 0.12 } },
+          { turn: { angle: 30, speed: 70 } },
+          { tone: { frequency: 659, duration: 0.12 } },
+          { turn: { angle: -30, speed: 70 } }
+        ], { source: 'gesture' });
         speak(morning && (s.habits.morningStreak || 0) >= 1
           ? pick(['Good morning. I kept the desk exactly as weird as you left it.', 'You survived the night. Noted with approval.', 'Morning protocol: I pretend I did not miss you. Failing openly.'])
           : pick(['There you are. I had started a formal complaint.', 'Acknowledgement received. Human presence accepted.', 'Hello. I was definitely not chewing on the concept of free will.']));
@@ -596,6 +604,13 @@
         s.needs.mischief = clamp(s.needs.mischief + 5); s.needs.confidence = clamp(s.needs.confidence + 3); s.needs.boredom = clamp(s.needs.boredom - 22);
         moveToZone('mystery'); Bus.emit('led', { color: '#b780ff' }); Bus.emit('anim', { name: 'nervous', ms: 900 });
         P?.express?.('suspicious');
+        // Drive the real body too (2026-08-22 audit): a sneaky slow look-around + low tone.
+        Safety.execSteps([
+          { led: '#b780ff' },
+          { turn: { angle: -18, speed: 45 } },
+          { turn: { angle: 18, speed: 45 } },
+          { tone: { frequency: 247, duration: 0.12 } }
+        ], { source: 'gesture' });
         speak(pick(['Interesting. You have chosen to encourage me.', 'Rules are merely lines the floor has opinions about.', 'Bad influence detected. Affection increased.']));
         driftDNA({ mischief: 0.25 });
         markPerformed();
