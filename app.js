@@ -121,16 +121,17 @@
     document.querySelectorAll('[data-view]').forEach(b => { b.classList.toggle('selected', b.dataset.view === next); if (b.dataset.view === next) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   }
   async function runSolo(title, steps, quip, isRecipe = false) {
-    if (busy() || bridge.stopPending || bridge.status === 'connecting') return;
-    if (bridge.status === 'offline') { showConnection(); return; }
+    if (busy() || bridge.stopPending || bridge.status === 'connecting') return false;
+    if (bridge.status === 'offline') { showConnection(); return false; }
     sound.unlock(); exitGame(); const id = ++runNumber, controller = new AbortController(); solo = { id, controller, title }; refreshBusy();
     $('speechBubble').textContent = quip || 'Your moves. My tiny wheels.'; $('sceneCaption').textContent = title + (bridge.connected && !bridge.floor ? ' · Lights only on the real Evo.' : ' · Let’s do this.');
     try {
       await perform(steps, controller.signal);
-      if (id !== runNumber || controller.signal.aborted) return;
+      if (id !== runNumber || controller.signal.aborted) return false;
       if (isRecipe) { award('maker'); save(); $('builderNote').textContent = 'Masterpiece performed! Mix it up and make another.'; }
       scene.celebrate(); sound.win(); $('speechBubble').textContent = 'Again? I could do this all day.';
-    } catch (error) { if (error.name !== 'AbortError') { toast(error.message); $('builderNote').textContent = error.message; } }
+      return true;
+    } catch (error) { if (error.name !== 'AbortError') { toast(error.message); $('builderNote').textContent = error.message; } return false; }
     finally { if (solo?.id === id) solo = null; refreshBusy(); }
   }
   function recipeSteps(recipe = prefs.recipe) { return recipe.flatMap(id => N.MOVES[id]?.steps || []); }
@@ -140,10 +141,15 @@
     $('recipeList').replaceChildren(...prefs.recipe.map((id, index) => { const item = el('li'); item.append(el('span', String(index + 1)), el('b', N.MOVES[id].icon + ' ' + N.MOVES[id].title)); const remove = button('×', '', () => { if (busy()) return; prefs.recipe.splice(index, 1); save(); renderRecipe(); }); remove.setAttribute('aria-label', 'Remove move ' + (index + 1) + ': ' + N.MOVES[id].title); item.append(remove); return item; }));
     $('emptyRecipe').hidden = prefs.recipe.length > 0; $('undoMove').disabled = $('clearRecipe').disabled = !prefs.recipe.length; refreshBusy();
   }
-  function addMove(id) {
+  function canAddMove(id) {
     if (busy()) { toast('Stop the current activity before changing your routine.'); return; }
     const next = [...prefs.recipe, id];
-    if (next.length > 8 || recipeSteps(next).length > 16 || recipeDuration(next) > 7) { $('builderNote').textContent = 'That’s a full little routine! Remove a move to make room.'; return; }
+    if (next.length > 8 || recipeSteps(next).length > 16 || recipeDuration(next) > 7) { $('builderNote').textContent = 'That’s a full little routine! Remove a move to make room.'; return false; }
+    return true;
+  }
+  function addMove(id) {
+    if (!canAddMove(id)) return;
+    const next = [...prefs.recipe, id];
     prefs.recipe = next; $('builderNote').textContent = N.MOVES[id].title + ' added. What comes next?'; save(); renderRecipe();
   }
   function renderBadges() {
@@ -199,12 +205,18 @@
     moveMode = mode;
     $('driveMode').setAttribute('aria-pressed', String(mode === 'drive'));
     $('buildMode').setAttribute('aria-pressed', String(mode === 'build'));
-    $('moveModeHelp').textContent = mode === 'drive' ? 'Tap a move and Ozi does it now.' : 'Tap moves to build a tiny masterpiece.';
-    $('moveHint').textContent = mode === 'drive' ? 'Tap a button to play that move. For real wheels, enable floor play.' : 'Up to 8 moves and 7 seconds. Tap Perform my moves when ready.';
+    $('moveModeHelp').textContent = mode === 'drive' ? 'Tap a move and Ozi does it now.' : 'Each tap previews the move and adds it to your routine.';
+    $('moveHint').textContent = mode === 'drive' ? 'Tap a button to play that move. For real wheels, enable floor play.' : 'Each tap makes Ozi try the move, then adds it. Up to 8 moves and 7 seconds.';
   }
   $('driveMode').addEventListener('click', () => setMoveMode('drive'));
   $('buildMode').addEventListener('click', () => setMoveMode('build'));
-  $('movePalette').replaceChildren(...Object.entries(N.MOVES).map(([id, move]) => { const b = button('', '', () => { if (moveMode === 'build') addMove(id); else if (bridge.connected && !bridge.floor && move.steps.some(step => step.move || step.turn)) toast('Wheels are locked. Enable floor play to move the real Evo.'); else runSolo(move.title, move.steps, 'Here comes ' + move.title.toLowerCase() + '!'); }); b.dataset.move = id; b.append(el('span', move.icon), el('small', move.title)); return b; }));
+  $('movePalette').replaceChildren(...Object.entries(N.MOVES).map(([id, move]) => { const b = button('', '', async () => {
+    const building = moveMode === 'build';
+    if (building && !canAddMove(id)) return;
+    if (bridge.connected && !bridge.floor && move.steps.some(step => step.move || step.turn)) { toast('Wheels are locked. Enable floor play to preview this move on the real Evo.'); return; }
+    const completed = await runSolo(move.title, move.steps, 'Here comes ' + move.title.toLowerCase() + '!');
+    if (building && completed) addMove(id);
+  }); b.dataset.move = id; b.append(el('span', move.icon), el('small', move.title)); return b; }));
   $('undoMove').addEventListener('click', () => { if (busy()) return; prefs.recipe.pop(); save(); renderRecipe(); });
   $('clearRecipe').addEventListener('click', () => { if (busy()) return; prefs.recipe = []; save(); renderRecipe(); });
   $('runRecipe').addEventListener('click', () => runSolo('Your masterpiece', recipeSteps(), 'Your moves. My tiny wheels.', true));
@@ -222,13 +234,14 @@
   window.addEventListener('pagehide', () => {
     if (bridge.key && bridge.connected) fetch('http://127.0.0.1:8787/stop', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OzoPet-Key': bridge.key }, body: '{}', keepalive: true }).catch(() => {});
   });
-  function frame(at) { if (!advancing) clock.tick(Math.min(100, Math.max(0, at - lastFrame))); lastFrame = at; scene.render(); requestAnimationFrame(frame); }
+  function renderScene() { scene.render(); if (view === 'create') $('movePreview').getContext('2d').drawImage($('playground'), 0, 0, 280, 212); }
+  function frame(at) { if (!advancing) clock.tick(Math.min(100, Math.max(0, at - lastFrame))); lastFrame = at; renderScene(); requestAnimationFrame(frame); }
   window.render_game_to_text = () => JSON.stringify({ view, busy: busy(), game: currentGame, robot: bridge.state(), recipe: prefs.recipe, recipeSeconds: recipeDuration(), scores: prefs.scores, badges: prefs.badges, scene: { ...scene.currentPose(), color: scene.color, coordinateSystem: 'Canvas origin top-left. x increases right; y increases down. Trail cells are a plan, not real robot location.' } });
   window.advanceTime = async ms => {
     // Deterministic screen tests must never accelerate commands to a real robot.
     if (bridge.connected) throw new Error('Deterministic time is available only in screen play.');
     advancing = true;
-    try { for (let elapsed = 0; elapsed < Math.min(ms, 120000); elapsed += 20) { clock.tick(Math.min(20, ms - elapsed)); for (let i = 0; i < 8; i++) await Promise.resolve(); } scene.render(); }
+    try { for (let elapsed = 0; elapsed < Math.min(ms, 120000); elapsed += 20) { clock.tick(Math.min(20, ms - elapsed)); for (let i = 0; i < 8; i++) await Promise.resolve(); } renderScene(); }
     finally { advancing = false; lastFrame = performance.now(); }
   };
   // Reject an invalid saved routine instead of relying on server truncation.

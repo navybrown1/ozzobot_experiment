@@ -48,10 +48,14 @@ try {
   await page.screenshot({ path: 'output/playwright/game-complete.png', fullPage: true });
   await page.locator('[data-view="create"]').click();
   await page.locator('#buildMode').click();
-  for (let i = 0; i < 5; i++) await page.locator('[data-move="forward"]').click();
+  await page.locator('[data-move="forward"]').click();
+  assert((await state()).busy, 'preview begins immediately');
+  await page.locator('#stopButton').click(); await advance(3000);
+  assert.equal((await state()).recipe.length, 0, 'stopped preview must not add a move');
+  for (let i = 0; i < 5; i++) { await page.locator('[data-move="forward"]').click(); await advance(3000); }
   assert.equal((await state()).recipe.length, 3); assert((await state()).recipeSeconds <= 7);
   await page.locator('#clearRecipe').click();
-  for (const id of ['left', 'right', 'glow', 'forward']) await page.locator(`[data-move="${id}"]`).click();
+  for (const id of ['left', 'right', 'glow', 'forward']) { await page.locator(`[data-move="${id}"]`).click(); await advance(4000); }
   await page.screenshot({ path: 'output/playwright/create-desktop.png', fullPage: true });
   await page.locator('#runRecipe').click(); await advance(7000); assert.equal((await state()).busy, false); assert((await state()).badges.includes('maker'));
   await page.reload(); await page.waitForFunction(() => !!window.render_game_to_text); assert.equal((await state()).busy, false); assert.equal((await state()).recipe.length, 4); assert.equal((await state()).badges.length, 5);
@@ -81,6 +85,14 @@ try {
   await page.locator('#floorButton').click(); await page.locator('#floorConsent').check(); await page.locator('#armFloor').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.floor); assert.equal((await state()).robot.floor, true);
   assert(await page.locator('#stopDock').evaluate(el => el.classList.contains('compact')));
   await page.locator('[data-view="create"]').click();
+  await page.locator('#clearRecipe').click();
+  await page.locator('#buildMode').click();
+  const beforePreview = requests.length;
+  await page.locator('[data-move="left"]').click();
+  await page.waitForFunction(() => !JSON.parse(window.render_game_to_text()).busy, undefined, { timeout: 15000 });
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).recipe.length === 1);
+  assert(requests.slice(beforePreview).some(r => r.p === '/sequence' && r.body.steps.some(s => s.turn?.angle === 90)), 'build mode previews on the robot');
+  await page.locator('#driveMode').click();
   for (const [id, field, value] of [['forward','move',120], ['back','move',-120], ['left','turn',90], ['right','turn',-90], ['spin','turn',180], ['wiggle','turn',90], ['glow','led','#ff405e'], ['pause','wait',1]]) {
     const before = requests.length;
     await page.locator(`[data-move="${id}"]`).click();
@@ -92,7 +104,7 @@ try {
   await page.locator('[data-view="play"]').click();
   failSequence = true; await page.locator('[data-trick="wiggle"]').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.status === 'offline');
   assert.equal((await state()).robot.floor, false); assert.equal((await state()).busy, false);
-  const motorRequests = requests.filter(r => r.p === '/sequence' && r.body.steps.some(s => s.move || s.turn)); assert.equal(motorRequests.length, 7, 'failed motor request must not replay');
+  const motorRequests = requests.filter(r => r.p === '/sequence' && r.body.steps.some(s => s.move || s.turn)); assert.equal(motorRequests.length, 8, 'failed motor request must not replay');
   await page.locator('#connectButton').click(); await page.locator('#screenPlay').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.status === 'screen');
   await page.setViewportSize({ width: 390, height: 844 }); await page.reload(); await page.waitForFunction(() => !!window.render_game_to_text);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
