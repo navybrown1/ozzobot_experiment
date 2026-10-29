@@ -1,155 +1,52 @@
-# OzoPet
+# Ozi Play Club
 
-OzoPet is a persistent digital pet built around the physical personality of an Ozobot Evo. The hosted app is deliberately useful without hardware, then upgrades into a real-robot experiment when a local Evo bridge is connected.
+A small, colorful playroom for ages 8–9, with four short games, expressive screen animation, custom move recipes, and optional supervised Ozobot Evo play.
 
-## What Ozi can now do
+## Play
 
-Ozi runs on a real behavior engine — it is not a row of decorative buttons.
+- **Freeze Dance:** three rounds of dance/freeze cues. Scores measure the child's button reaction, not body movement.
+- **Copycat:** remember and repeat five growing color patterns. Wrong answers produce an honest retry, not a disconnected-robot message.
+- **Color Quest:** screen matching, or genuine surface-color reads when connected to a physical Evo. Use colored paper beneath its sensor; it does not recognize objects across the room.
+- **Treasure Trail:** steer around obstacles on a five-by-five game board. The board is a plan, not localization of the physical robot.
+- **Make a move:** compose forward/back, turns, wiggles, spins, colors and pauses. Up to eight blocks, sixteen commands and seven predicted seconds per routine.
+- **Quick tricks:** six-second choreography with 120 mm steps, wider turns and full spins. Audio is synthesized by the browser, not the robot speaker.
 
-- **12 internal drives** (energy, hunger, affection, social, curiosity, boredom, confidence, trust, mischief, sleepiness, playfulness, stress) that drift in real time and shape everything Ozi does
-- **Initiates interaction**: asks for attention, play, snacks, dances, exploration or sing-alongs via request cards with PLAY / LATER choices — with cooldowns so it never nags
-- **Self-directed life**: wanders zones, hums original melodies, does micro-dances, scans suspiciously, drifts to the nest when tired, throws zoomies
-- **9 named dance routines** built from choreography primitives (The Wiggle, Happy Spin, Robot Salsa, Moonwalk, Dramatic Entrance, Shy Dance, Victory Lap, Zoomies — plus one SECRET routine that unlocks after five dances)
-- **10 original songs** (greeting, lullaby, victory arpeggio, feeding anthem, mischief noises, wandering hum…) performed with synchronized LED patterns; unheard tracks appear as `???` in the Songbook until Ozi performs them
-- **Body language**: 13 physical expressions (curious, excited, nervous, angry, sad, happy, sleepy, suspicious, refusal, startle…) that work in simulation and on the real robot
-- **7 arcade missions**: Simon Says, Red Light Wiggle, Dance Party, Color Hunt (reads real surface colors), Mystery Box, Guard Duty (uses real IR proximity), Hide & Seek
-- **Meaningful sleep**: bedtime journey to the nest, soft-blue lullaby, dreams composed from the day's actual memories, mentioned at wake-up
-- **Memory that matters**: preferences learned per activity/zone/game/dance/song, habits (morning greetings, evening sleepy nudges, dance-after-snack), discoveries instead of trophies (First Song, Trusted Human, Night Owl, Purple Obsession…)
-- **Personality evolution**: DNA traits drift slowly from how you actually treat Ozi, changing planner weights — two OzoPets behave differently over time
+The screen starts in **Screen Play**. That label does not claim a physical robot is connected. Scores, recipes and badges are stored on the current browser/device. Old v1/v2 pet data remains intact, but is not loaded into the new game system.
 
-## Desk mode vs Floor Adventure mode
+## Real Evo setup
 
-**DESK MODE (default).** The browser stays the brain and every wheel stays locked. Autonomous behavior is limited to LEDs, tones, tiny stationary turns (≤20°) and sensor reactions. Translation commands are stripped client-side *and* clamped server-side. Living Mode can never drive the robot off your desk.
+1. Install the local bridge dependencies once with `bridge/install.sh`.
+2. On macOS, run `bridge/install-launch-agent.sh` to install/update its background service. Keep the bridge key private; paste it into **Connect Ozi**.
+3. Turn on the Evo and keep it nearby. An explicit connection checks a harmless light command before saying the robot is ready.
+4. Place it on a clear, flat floor, away from stairs, with an adult nearby. Check the floor confirmation and select **Enable floor play**.
+5. Choose a game or trick. The robot never starts a physical routine just because the page loads.
 
-**FLOOR ADVENTURE MODE (explicit only).** Inside Hardware Lab: switch to FLOOR, tick *"The robot is on a clear floor area."*, and supervised autonomy arms — short clamped moves (≤50 mm/step, 45°/step, 7 s budget), Follow Me / Come Here / Follow My Hand using an honest webcam color-card tracker (the Evo has no camera of its own), with IR proximity obstacle guards. A huge red STOP button is always visible while a body is attached; e-stop fires automatically on bridge loss, camera loss or tab-hidden, cutting motion and disconnecting.
+**Desk / lights-only play never sends wheels or turns.** Protocol 4 is required for floor motion. STOP, disconnect, a detected dead Bluetooth link, and the server's routine deadline lock the wheels again. Floor permission is not saved across page loads. Reconnection never replays a failed movement.
 
-## What is already in this first build
+STOP is a best-effort physical halt, not a guaranteed acknowledgement from a disconnected robot. If the robot keeps moving after a lost connection, turn it off. Keep it off tables and away from stairs during floor play. The browser stops the activity when hidden; radio failure can still prevent delivery of the stop command.
 
-- Persistent pet state in browser localStorage
-- Personality DNA that changes behavior
-- Autonomous "living mode"
-- Interactive desk habitat and color-coded physical-zone concept
-- Memories, trust, boredom, curiosity, mischief and relationship state
-- Dream generator that remixes recent experiences
-- Synthesized Ozo-style chirps with Web Audio
-- Hardware Lab with safety-clamped movement, turn, LED, tone and surface-color actions
-- A localhost-only Python bridge with a random session key
-- Full simulation fallback when the experimental Evo runtime is unavailable
+Website deployment does **not** update the local bridge. Update the service separately after changes to the Python file. The bridge remains bound to `127.0.0.1:8787`; do not expose it to the internet.
 
-## Run the web app locally
+See [bridge/SEQUENCE_API.md](bridge/SEQUENCE_API.md) for authentication, limits, cancellation, protocol and SDK assumptions.
 
-The site is static. Any simple local server works:
+## Develop and verify
 
-```powershell
-py -m http.server 3000
+```sh
+npm ci --ignore-scripts
+npm start
+npm test
+npx playwright install chromium
+npm run test:browser
 ```
 
-Then open `http://localhost:3000`.
+If your global npm settings select a workspace, append `--workspaces=false` to npm commands. Browser tests need the local server running. They intercept bridge requests and **never access real Bluetooth hardware**. Screenshots are written to the gitignored `output/playwright/` folder.
 
-## Try the bridge without the robot
-
-Python 3.13+:
-
-```powershell
-cd bridge
-py ozopet_bridge.py --sim
-```
-
-The bridge prints a one-time key. Open **Hardware Lab** in OzoPet, paste that key, and connect. This verifies the Vercel/browser-to-local-bridge path without moving real hardware.
-
-## Try the real Ozobot Evo
-
-The current `ozobot-evo` package requires Python 3.13+. On PyPI it only
-supports the Ozobot Editor web runtime ("Evo native driver is not yet
-implemented"), so `install.sh` installs the official packages from a pinned
-commit of [ozobot/python-libraries](https://github.com/ozobot/python-libraries),
-where native BLE via bleak is implemented.
-
-macOS / Linux:
-
-```bash
-cd bridge
-./install.sh          # creates .venv, installs pinned SDK + dependencies
-.venv/bin/python ozopet_bridge.py
-```
-
-For a bridge that starts automatically at login and restarts after a crash on
-macOS, install the included per-user LaunchAgent:
-
-```bash
-bridge/install-launch-agent.sh
-```
-
-The installer synchronizes the runtime into
-`~/Library/Application Support/OzoPet/bridge` because macOS protects
-`~/Desktop` from background LaunchAgents. Re-run it after changing bridge code
-to refresh the service copy. The service creates a per-user Hardware Lab key
-at `~/Library/Application Support/OzoPet/bridge/bridge-key` with mode `600`;
-the installer prints it for pasting into Hardware Lab. The bridge remains
-bound to the loopback-only endpoint `127.0.0.1:8787`.
-
-Windows (PowerShell) — same script logic manually:
-
-```powershell
-cd bridge
-py -3.13 -m venv .venv
-.venv\Scripts\activate
-python -m pip install loguru "bleak~=2.0.0" "pydantic>=2.11.5" "ozobot-web>=0.3.0,<0.4.0"
-python -m pip install --no-deps `
-  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-common" `
-  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-ble" `
-  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-linefollower" `
-  "git+https://github.com/ozobot/python-libraries@caead3f59c862e329cbb0a96abc0ce2c0e21999b#subdirectory=ozobot-evo"
-python ozopet_bridge.py
-```
-
-On macOS the first BLE scan makes the system ask permission for Python to
-use Bluetooth — approve it once. Chrome may also ask for Local Network
-Access the first time the hosted app talks to the loopback bridge.
-
-The default BLE name filter is `OzoEvo-*`. Override it if necessary:
-
-```powershell
-py ozopet_bridge.py --name "OzoEvo-ABC*"
-```
-
-### Important hardware status
-
-The bridge drives the Evo over native Bluetooth LE using Ozobot's official
-`ozobot` Python packages (bleak/CoreBluetooth transport). Verified working
-end-to-end on macOS (Apple Silicon, Python 3.13): LED, tone, surface-color
-read, small turns and short moves.
-
-The bridge is intentionally conservative:
-
-- binds only to `127.0.0.1`
-- requires a random bridge key
-- does not accept arbitrary code
-- clamps movement to +/-120 mm
-- clamps turns to +/-180 degrees
-- clamps speed and tone ranges
-- keeps physical commands short
+`npm test` covers source/DOM checks, deterministic activity tests and Python fake-BLE/HTTP bridge tests. `test:browser` plays the games, verifies replay and STOP, saved recipes, wheel arming, failure without motor replay, and mobile layout. Tests do not prove actual robot motion or radio reliability; those require a supervised physical session.
 
 ## Architecture
 
-```text
-Vercel static UI
-    |
-    | localhost HTTP + one-time key
-    v
-OzoPet local bridge
-    |
-    | Ozobot Python API
-    v
-Ozobot Evo
+`index.html` → `playroom/scene.js` (clock, canvas, audio) → `playroom/robot.js` (one explicit transport) → `playroom/activities.js` (cancellable game state) → `app.js` (UI, storage, controls).
 
-<!-- last updated: 2026-08-21 -->
-```
+Legacy `pet/` and `runtime-guard.js` sources are retained for history but are not loaded. There is no legacy fetch interceptor running alongside the new transport.
 
-The product direction is larger than a controller. The Evo becomes a persistent desk creature with memories, learned preferences, autonomous behavior, physical color zones, a relationship model and eventually an AI behavior planner behind a deterministic safety controller.
-
-## Sources used for the hardware adapter
-
-- Ozobot Python SDK, Ari & Evo documentation: https://docs.ozobot.com/python/linefollower/index.html
-- Ozobot synchronous API reference: https://docs.ozobot.com/python/linefollower/sync/apidoc.html
-- `ozobot-evo` package: https://pypi.org/project/ozobot-evo/
+GitHub's `main` branch deploys the existing Vercel site. The workflow runs static, game, bridge and browser regression checks. No account credentials or bridge keys belong in the repository.

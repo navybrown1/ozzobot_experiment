@@ -1,385 +1,49 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#efe8d7" />
-  <meta name="description" content="OzoPet turns an Ozobot Evo into a persistent little desk creature." />
-  <title>OzoPet // Field Unit 001</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%2372d9f7' stroke='%23151515' stroke-width='4'/%3E%3Ccircle cx='22' cy='20' r='6' fill='%23ee4b2b' stroke='%23151515' stroke-width='2.5'/%3E%3Ccircle cx='42' cy='40' r='10' fill='none' stroke='%23151515' stroke-width='4'/%3E%3C/svg%3E" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css" />
-  <meta name="ozi-build" content="2026-08-22h" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f6f2">
+  <meta name="description" content="A little robot with big play energy. Dance, play, and invent your own moves with Ozi Play Club.">
+  <title>Ozi Play Club · Little bot, big personality</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/ozi-mark.svg">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="./playroom/scene.js"></script>
+  <script defer src="./playroom/robot.js"></script>
+  <script defer src="./playroom/activities.js"></script>
+  <script defer src="./app.js"></script>
 </head>
 <body>
-  <div class="page-noise" aria-hidden="true"></div>
-  <div class="paper-fold fold-a" aria-hidden="true"></div>
-  <div class="paper-fold fold-b" aria-hidden="true"></div>
-
-  <div class="app-shell">
-    <header class="masthead">
-      <div class="issue-tab">FIELD UNIT 001</div>
-      <div class="brand-lockup" aria-label="OzoPet">
-        <div class="brand-mark" aria-hidden="true">
-          <span class="brand-dot"></span>
-          <span class="brand-ring"></span>
-        </div>
-        <div class="brand-copy">
-          <div class="brand">OZO<span>PET</span></div>
-          <div class="brand-sub">A LIVING DESK CREATURE / EVO BODY LAB</div>
-        </div>
+  <a class="skip-link" href="#main">Skip to play</a>
+  <header class="masthead">
+    <a class="brand" href="#play" aria-label="Ozi Play Club home"><img src="./assets/ozi-mark.svg" alt="" width="44" height="44"><span>ozi<span class="brand-caption">PLAY CLUB</span></span></a>
+    <nav class="main-nav" aria-label="Main navigation"><button class="nav-item selected" data-view="play" aria-current="page">Playroom</button><button class="nav-item" data-view="create">Make a move</button><button class="nav-item" data-view="badges">My badges <span id="badgeCount" class="nav-count">0</span></button></nav>
+    <div class="header-actions"><button id="soundButton" class="icon-button" aria-label="Turn sound on" aria-pressed="false"><span aria-hidden="true">♪</span></button><button id="connectButton" class="connection-button"><span class="status-dot" aria-hidden="true"></span><span id="connectionLabel">Connect Ozi</span><span aria-hidden="true">↗</span></button></div>
+  </header>
+  <main id="main">
+    <section class="playroom" aria-label="Ozi's playroom">
+      <div class="intro" id="introPanel"><div class="eyebrow"><span class="little-star" aria-hidden="true">✦</span> SMALL ROBOT. BIG PLAY ENERGY.</div><h1>Hey, you.<br>Let’s get <span class="silly-word">silly.<svg viewBox="0 0 280 22" aria-hidden="true"><path d="M5 14Q120-5 271 9M20 20Q170 6 250 19"/></svg></span></h1><p class="intro-copy">Your tiny partner in big adventures.<br>Pick a game. Make a move. Meet your new best bot.</p><button class="button coral start-game" data-game="freeze">Let’s play <span aria-hidden="true">↗</span></button><p class="play-note"><span class="mini-orbit" aria-hidden="true">◎</span><span id="playModeNote">Screen play is ready. Connect your Evo to play together.</span></p></div>
+      <div class="activity-panel" id="activityPanel" hidden aria-live="polite"><div class="activity-top"><span id="activityEyebrow" class="eyebrow">LET’S PLAY</span><button id="exitActivity" class="text-button">Back to playroom ↗</button></div><h1 id="activityTitle">Freeze dance</h1><p class="activity-instruction" id="activityInstruction"></p><div class="round-track" id="roundTrack" aria-label="Round progress"></div><div id="gameControls" class="game-controls"></div><div class="score-row"><span>YOUR SCORE <strong id="gameScore">0</strong></span><span id="gameBest"></span></div></div>
+      <div class="robot-stage" id="robotStage"><div class="stage-meta"><span class="stage-label"><span class="status-dot"></span><span id="stageMode">SCREEN PLAY</span></span><button id="floorButton" class="mode-button">Set up floor play ↗</button></div><div class="speech-bubble" id="speechBubble">I brought the wiggles.</div><canvas id="playground" width="900" height="680" role="img" aria-label="Ozi, a playful robot. Use the game buttons to play."></canvas><div class="stage-sticker" aria-hidden="true"><span>VERY SMALL</span><strong>very<br>mischievous.</strong><span>100% OZI</span></div><div class="stage-bottom"><span id="sceneCaption">A little hello goes a long way.</span><button id="helloButton" class="hello-button" aria-label="Say hello to Ozi">Say hi <span aria-hidden="true">✦</span></button></div></div>
+    </section>
+    <section id="playView" class="view-section" aria-label="Games and tricks">
+      <div class="section-heading"><h2>What’s the plan?</h2><span>Good times, one little game at a time.</span></div>
+      <div class="game-grid">
+        <button class="game-card freeze-card start-game" data-game="freeze"><span class="card-kicker">GET YOUR WIGGLE ON <span>01</span></span><svg class="card-art" viewBox="0 0 220 130" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M70 95V32l58-12v64M70 48l58-12"/><ellipse cx="56" cy="97" rx="15" ry="10" fill="currentColor"/><ellipse cx="114" cy="86" rx="15" ry="10" fill="currentColor"/><path d="m157 35 5-12m-7 41 16 5M34 52l-10-7M163 101l-8 12"/></g><path d="m184 37 4 11 11 4-11 4-4 11-4-11-11-4 11-4z" fill="currentColor"/></svg><span class="card-bottom"><span><strong>Freeze dance</strong><small>Wiggle. Freeze. Beat your best.</small></span><span class="round-arrow" aria-hidden="true">↗</span></span><span class="card-foot">3 ROUNDS <span>REACTION GAME</span></span></button>
+        <button class="game-card copy-card start-game" data-game="copycat"><span class="card-kicker">CAN YOU KEEP UP? <span>02</span></span><svg class="card-art" viewBox="0 0 220 130" aria-hidden="true"><g stroke="currentColor" stroke-width="4"><rect x="47" y="22" width="50" height="42" rx="13" fill="#fff8b8" transform="rotate(-10 72 43)"/><rect x="108" y="23" width="50" height="42" rx="13" fill="#fc937d" transform="rotate(6 133 44)"/><rect x="48" y="76" width="50" height="42" rx="13" fill="#ade3cd" transform="rotate(7 73 97)"/><rect x="110" y="75" width="50" height="42" rx="13" fill="#9dc9ff" transform="rotate(-9 135 96)"/></g><path d="M72 36v13m-7-6h14M126 40l8 9 8-9m-77 57 7-7 7 7m51-6 10 10m0-10-10 10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg><span class="card-bottom"><span><strong>Copycat</strong><small>Watch my colors. Show me yours.</small></span><span class="round-arrow" aria-hidden="true">↗</span></span><span class="card-foot">5 LEVELS <span>MEMORY GAME</span></span></button>
+        <button class="game-card color-card start-game" data-game="color"><span class="card-kicker">LITTLE COLOR DETECTIVE <span>03</span></span><svg class="card-art" viewBox="0 0 220 130" aria-hidden="true"><g stroke="currentColor" stroke-width="4"><path d="m60 30 58 10-12 77-59-11z" fill="#fff6bd"/><path d="m89 24 58-6 8 76-57 7z" fill="#9dc9ff"/><circle cx="133" cy="62" r="28" fill="#b8e7a8"/><path d="m152 84 30 30" stroke-width="13" stroke-linecap="round"/></g><path d="m123 61 8 8 14-17" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg><span class="card-bottom"><span><strong>Color quest</strong><small>A treasure hunt in full color.</small></span><span class="round-arrow" aria-hidden="true">↗</span></span><span class="card-foot">4 FINDS <span>EXPLORER GAME</span></span></button>
+        <button class="game-card trail-card start-game" data-game="trail"><span class="card-kicker">YOU’RE THE NAVIGATOR <span>04</span></span><svg class="card-art" viewBox="0 0 220 130" aria-hidden="true"><path d="M37 107h45V68h49V26h47" stroke="currentColor" stroke-width="5" fill="none" stroke-dasharray="6 8" stroke-linecap="round"/><path d="m175 11 5 11 12 2-9 9 2 13-11-6-11 6 2-13-9-9 13-2z" fill="#ff7458" stroke="currentColor" stroke-width="3"/><rect x="32" y="85" width="29" height="30" rx="10" fill="#fff" stroke="currentColor" stroke-width="3"/><path d="M41 96v6m11-6v6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg><span class="card-bottom"><span><strong>Treasure trail</strong><small>Turn, scoot, and find the star.</small></span><span class="round-arrow" aria-hidden="true">↗</span></span><span class="card-foot">YOUR OWN PACE <span>PUZZLE GAME</span></span></button>
       </div>
-
-      <div class="mast-actions">
-        <button class="switch-chip" id="livingToggle" title="Toggle autonomous behavior">
-          <span class="pulse-dot"></span><span id="livingLabel">living mode</span>
-        </button>
-        <button class="switch-chip" id="hardwareButton" title="Connect a local Ozobot bridge">
-          <span class="hardware-dot" id="hardwareDot"></span><span id="hardwareLabel">simulated body</span>
-        </button>
-        <button class="day-ticket" id="resetDayButton" title="Start a new day in the simulation">
-          <span>DAY</span><strong id="dayCount">001</strong>
-        </button>
-      </div>
-    </header>
-
-    <main class="layout">
-      <aside class="specimen-column">
-        <section class="specimen-card punch-card">
-          <div class="section-stamp">SPECIMEN</div>
-          <div class="portrait-window">
-            <div class="portrait-bot">
-              <span class="portrait-eye"></span>
-              <span class="portrait-eye"></span>
-              <span class="portrait-led"></span>
-            </div>
-            <div class="portrait-bars" aria-hidden="true"></div>
-          </div>
-          <div class="identity-row">
-            <div>
-              <div class="micro-label">CALL SIGN</div>
-              <h1 id="petName">OZI</h1>
-            </div>
-            <div class="identity-note">
-              <span id="archetype">curious trickster</span>
-              <small id="dnaTag">DNA // A7-C9-41</small>
-            </div>
-          </div>
-        </section>
-
-        <section class="status-board">
-          <div class="board-title">
-            <span>INNER WEATHER</span>
-            <b id="moodWord">curious</b>
-          </div>
-          <div class="meter-list" id="meterList">
-            <div class="meter-row"><label>energy</label><div class="meter-track"><div class="meter-fill" style="width:84%"></div></div><output>84</output></div>
-            <div class="meter-row"><label>curiosity</label><div class="meter-track"><div class="meter-fill" style="width:91%"></div></div><output>91</output></div>
-            <div class="meter-row"><label>social</label><div class="meter-track"><div class="meter-fill" style="width:63%"></div></div><output>63</output></div>
-            <div class="meter-row"><label>confidence</label><div class="meter-track"><div class="meter-fill" style="width:72%"></div></div><output>72</output></div>
-            <div class="meter-row"><label>mischief</label><div class="meter-track"><div class="meter-fill" style="width:82%"></div></div><output>82</output></div>
-            <div class="meter-row"><label>boredom</label><div class="meter-track"><div class="meter-fill" style="width:26%"></div></div><output>26</output></div>
-          </div>
-        </section>
-
-        <section class="bond-card">
-          <div class="bond-head">
-            <span>BOND INDEX</span>
-            <b id="bondLabel">new friend</b>
-          </div>
-          <div class="bond-layout">
-            <div class="bond-ring" id="bondRing" style="--bond:68%">
-              <div class="bond-ring-inner"><strong id="trustScore">68</strong><span>trust</span></div>
-            </div>
-            <p id="relationshipThought">Ozi is still deciding what kind of human you are.</p>
-          </div>
-        </section>
-      </aside>
-
-      <section class="world-column">
-        <div class="habitat-titlebar">
-          <div>
-            <div class="eyebrow">DESK MAP / LIVE FEED</div>
-            <h2 id="habitatTitle">THE MOSS CIRCUIT</h2>
-          </div>
-          <div class="weather-tag"><span id="habitatMoodDot"></span><span id="habitatWeather">softly curious</span></div>
-        </div>
-
-        <div class="habitat-frame">
-          <div class="frame-label left-label">HABITAT 04-A</div>
-          <div class="frame-label right-label">DO NOT FOLD</div>
-
-          <div class="habitat" id="habitat">
-            <div class="map-grid" aria-hidden="true"></div>
-            <div class="topographic topo-a" aria-hidden="true"></div>
-            <div class="topographic topo-b" aria-hidden="true"></div>
-            <div class="dust" id="dust"></div>
-
-            <button class="zone zone-food" data-zone="food" aria-label="Crunchbyte grove">
-              <span class="zone-code">A1</span>
-              <span class="zone-glyph">✹</span>
-              <span class="zone-name">CRUNCHBYTE<br>GROVE</span>
-              <span class="zone-note">green / snack</span>
-            </button>
-            <button class="zone zone-play" data-zone="play" aria-label="Play halo">
-              <span class="zone-code">B7</span>
-              <span class="zone-glyph">◎</span>
-              <span class="zone-name">PLAY<br>HALO</span>
-              <span class="zone-note">yellow / chaos</span>
-            </button>
-            <button class="zone zone-mystery" data-zone="mystery" aria-label="Mystery puddle">
-              <span class="zone-code">X?</span>
-              <span class="zone-glyph">◈</span>
-              <span class="zone-name">MYSTERY<br>PUDDLE</span>
-              <span class="zone-note">purple / unknown</span>
-            </button>
-            <button class="zone zone-nest" data-zone="nest" aria-label="Nest">
-              <span class="zone-code">H0</span>
-              <span class="zone-glyph">⌁</span>
-              <span class="zone-name">NEST</span>
-              <span class="zone-note">blue / home</span>
-            </button>
-
-            <div class="trail" id="trail"></div>
-            <div class="pet-shadow" id="petShadow"></div>
-
-            <div class="ozi" id="ozi" role="img" aria-label="Ozi, your virtual Ozobot pet">
-              <div class="ozi-antenna"></div>
-              <div class="ozi-shell">
-                <div class="shell-sheen"></div>
-                <div class="circuit circuit-a"></div>
-                <div class="circuit circuit-b"></div>
-                <div class="ozi-face"><i></i><i></i><i></i><i></i><i></i></div>
-                <div class="ozi-core"></div>
-                <div class="ozi-eye ozi-eye-left"></div>
-                <div class="ozi-eye ozi-eye-right"></div>
-                <div class="ozi-badge">OZ</div>
-              </div>
-              <div class="wheel wheel-left"></div>
-              <div class="wheel wheel-right"></div>
-              <div class="thought-pop" id="thoughtPop">?</div>
-            </div>
-
-            <div class="ambient-message" id="ambientMessage">
-              <span class="speaker">OZI / LIVE TRANSCRIPT</span>
-              <p id="ambientText">I have reviewed the desk. It appears suspiciously large.</p>
-            </div>
-
-            <div class="habitat-readout">
-              <span><b>ZONE</b><em id="zoneReadout">nest edge</em></span>
-              <span><b>SURFACE</b><em id="surfaceReadout">unknown</em></span>
-              <span><b>BODY</b><em id="bodyReadout">simulation</em></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="control-rack">
-          <div class="rack-label">INTERACTION BAY</div>
-          <button class="action action-hello" data-action="hello"><img class="act-icon" src="assets/buttons/hi.png" alt="" width="48" height="48"><b>HELLO</b><small>wave at me</small></button>
-          <button class="action action-feed" data-action="feed"><img class="act-icon" src="assets/buttons/feed.png" alt="" width="48" height="48"><b>SNACK</b><small>give a treat</small></button>
-          <button class="action action-explore" data-action="explore"><img class="act-icon" src="assets/buttons/explore.png" alt="" width="48" height="48"><b>EXPLORE</b><small>look around</small></button>
-          <button class="action action-dance" data-action="dance"><img class="act-icon" src="assets/buttons/dance.png" alt="" width="48" height="48"><b>DANCE</b><small>move it!</small></button>
-          <button class="action action-mischief" data-action="mischief"><img class="act-icon" src="assets/buttons/trouble.png" alt="" width="48" height="48"><b>TROUBLE</b><small>bad ideas</small></button>
-          <button class="action action-sleep" data-action="sleep"><img class="act-icon" src="assets/buttons/sleep.png" alt="" width="48" height="48"><b>BEDTIME</b><small>nap time</small></button>
-        </div>
-      </section>
-
-      <aside class="archive-column">
-        <section class="mind-receipt">
-          <div class="receipt-top">
-            <span>MINDSTREAM</span>
-            <span class="live-mark">REC ●</span>
-          </div>
-          <div class="receipt-body">
-            <div class="quote-mark">“</div>
-            <p id="mindText">You returned. I had not finished judging the keyboard.</p>
-            <div class="mind-tags" id="mindTags">
-              <span>curious</span><span>nest</span><span>occupied</span><span>bad ideas</span>
-            </div>
-          </div>
-          <div class="receipt-teeth" aria-hidden="true"></div>
-        </section>
-
-        <section class="memory-tape">
-          <div class="tape-head">
-            <span>TINY MEMORIES</span>
-            <button class="text-button" id="clearMemories">ERASE</button>
-          </div>
-          <div class="memory-feed" id="memoryFeed">
-            <div class="memory-item"><div class="memory-index">02</div><div><p>Decided the north edge of the desk probably contains secrets.</p><time>a moment ago</time></div></div>
-            <div class="memory-item"><div class="memory-index">01</div><div><p>Woke up and immediately distrusted the keyboard.</p><time>first light</time></div></div>
-          </div>
-        </section>
-
-        <section class="doors-card">
-          <div class="doors-head"><span>SECRET COMPARTMENTS</span><b>07</b></div>
-          <button class="door-button" data-modal="howtoModal"><span><small>01</small> HOW TO PLAY</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="dnaModal"><span><small>02</small> PERSONALITY DNA</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="dreamModal"><span><small>03</small> DREAM VAULT</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="hardwareModal"><span><small>04</small> HARDWARE LAB</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="danceModal"><span><small>05</small> DANCE DECK</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="arcadeModal"><span><small>06</small> ARCADE</span><b>OPEN</b></button>
-          <button class="door-button" data-modal="songbookModal"><span><small>07</small> SONGBOOK</span><b>OPEN</b></button>
-        </section>
-      </aside>
-    </main>
-
-    <footer class="footer-strip">
-      <span>LOCAL MEMORY ACTIVE</span>
-      <span id="footerStatus">simulation awake // no hardware commands sent</span>
-      <span>OZOPET FIELD SYSTEMS</span>
-    </footer>
-  </div>
-
-  <div class="modal-layer" id="modalLayer" aria-hidden="true">
-    <div class="modal-scrim" data-close-modal></div>
-
-    <section class="modal" id="howtoModal" aria-modal="true" role="dialog" aria-label="How to Play">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">HOW TO PLAY // FIELD MANUAL</div>
-      <h2>WHO IS OZI, AND HOW DO I PRESS ITS BUTTONS?</h2>
-      <p class="modal-lead">OZI is a tiny desk creature — a curious trickster with real opinions. It lives in this page, remembers you, dreams about you, and (with a grown-up's help) can borrow a real Evo robot body.</p>
-      <div class="howto-grid">
-        <div class="howto-panel">
-          <div class="tiny-label" style="margin-top:0">NO ROBOT? START HERE</div>
-          <div class="howto-step"><span class="howto-num">1</span><div><b>JUST LOOK AT OZI</b><p>It is already awake. It watches the desk, thinks thoughts and mutters them in the MINDSTREAM.</p></div></div>
-          <div class="howto-step"><span class="howto-num">2</span><div><b>PRESS THE SIX BIG BUTTONS</b><p>HELLO says hi. SNACK gives a treat. EXPLORE looks around. DANCE starts a party. TROUBLE is a bad influence. BEDTIME is nap time.</p></div></div>
-          <div class="howto-step"><span class="howto-num">3</span><div><b>COME BACK TOMORROW</b><p>OZI notices when you are gone. Its mood drifts, new TINY MEMORIES appear, and the DREAM VAULT remixes your day into tiny stories.</p></div></div>
-        </div>
-        <div class="howto-panel">
-          <div class="tiny-label" style="margin-top:0">REAL ROBOT MODE (ASK A GROWN-UP)</div>
-          <div class="howto-step"><span class="howto-num">A</span><div><b>A GROWN-UP RUNS THE BRIDGE</b><p>One-time setup on the computer next to the robot. Instructions live in the README next to <code>bridge/install.sh</code>.</p></div></div>
-          <div class="howto-step"><span class="howto-num">B</span><div><b>PASTE THE BRIDGE KEY</b><p>Open HARDWARE LAB, paste the one-time key the bridge shows, then press CONNECT. The real Evo lights up when linked.</p></div></div>
-          <div class="howto-step"><span class="howto-num">C</span><div><b>USE THE SAFE BODY TEST</b><p>Arrows drive it a little. The dot beeps. Swatches change its light. READ SURFACE COLOR asks what the floor is made of.</p></div></div>
-        </div>
-      </div>
-      <div class="howto-kid"><b>SAFETY RULES.</b> The browser stays the brain: Living Mode can never steer the real robot by itself — every move needs a fresh button click. Moves are size-clamped so OZI never zooms off the desk. Keep the official Ozobot Editor closed while connected; they fight over the same Bluetooth link.</div>
-      <a class="modal-secondary howto-print" href="./docs/how-to-play-printable.html" target="_blank" rel="noopener">PRINTABLE ONE-PAGE GUIDE</a>
+      <div class="trick-bar"><div><h3>Or, just be ridiculous.</h3><p>One tap. One very happy little robot.</p></div><div class="trick-buttons"><button data-trick="wiggle"><span aria-hidden="true">〰</span> Wiggle</button><button data-trick="sneak"><span aria-hidden="true">↝</span> Sneak</button><button data-trick="spin"><span aria-hidden="true">↻</span> Spin</button><button data-trick="surprise" class="surprise"><span aria-hidden="true">✦</span> Surprise me</button></div></div>
     </section>
-
-    <section class="modal" id="hardwareModal" aria-modal="true" role="dialog" aria-label="Hardware Lab">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">HARDWARE LAB // EXPERIMENTAL</div>
-      <h2>GIVE OZI THE REAL BODY.</h2>
-      <p class="modal-lead">The browser remains the brain. A local bridge on your computer handles the physical Evo and keeps every movement command safety-clamped. Physical motor commands require a fresh click or key press, so Living Mode cannot make the real robot wander on its own.</p>
-      <div class="hardware-grid">
-        <div class="connection-panel">
-          <div class="connection-orb" id="connectionOrb"><span></span></div>
-          <h3 id="connectionTitle">No body attached</h3>
-          <p id="connectionDetail">Start the bridge, paste its one-time key, then connect.</p>
-          <label class="field-label" for="bridgeKey">BRIDGE KEY</label>
-          <input id="bridgeKey" class="bridge-input" placeholder="example: 8f21c0..." autocomplete="off" />
-          <div class="button-row">
-            <button class="modal-primary" id="connectBridge">CONNECT TO LOCAL BRIDGE</button>
-            <button class="modal-secondary" id="disconnectBridge">DISCONNECT</button>
-          </div>
-          <div class="micro-copy">Fixed endpoint: <code>http://127.0.0.1:8787</code>. Chrome may ask for Local Network Access the first time the hosted app talks to the bridge.</div>
-        </div>
-        <div class="control-panel">
-          <div class="tiny-label">SAFE BODY TEST</div>
-          <div class="dpad">
-            <button data-hw="forward">▲<small>GO</small></button>
-            <button data-hw="left">◀<small>LEFT</small></button>
-            <button data-hw="tone">●<small>BEEP</small></button>
-            <button data-hw="right">▶<small>RIGHT</small></button>
-            <button data-hw="back">▼<small>BACK</small></button>
-          </div>
-          <div class="led-swatches">
-            <button data-led="mint" style="--swatch:#4bd69d" aria-label="mint LED"></button>
-            <button data-led="violet" style="--swatch:#7557ff" aria-label="violet LED"></button>
-            <button data-led="amber" style="--swatch:#f3b61f" aria-label="amber LED"></button>
-            <button data-led="red" style="--swatch:#ee4b2b" aria-label="red LED"></button>
-          </div>
-          <button class="wide-test" id="readColorButton">READ EVO SURFACE COLOR</button>
-        </div>
-      </div>
-      <fieldset class="floor-panel">
-        <legend class="floor-legend">FLOOR ADVENTURE</legend>
-        <p class="modal-lead" style="margin-top:0"><b>Ozi can't see — your camera is its eyes!</b> Desk mode keeps every wheel locked. Floor mode unlocks tiny supervised moves — only after you confirm the robot is somewhere safe.</p>
-        <div class="mode-toggle" role="group" aria-label="Surface mode">
-          <button class="mode-chip active" id="oziModeDesk" type="button">DESK</button>
-          <button class="mode-chip" id="oziModeFloor" type="button">FLOOR</button>
-        </div>
-        <label class="confirm-row"><input type="checkbox" id="oziFloorConfirm" /> The robot is on a clear floor area.</label>
-        <div class="cam-frame">
-          <video id="oziCamVideo" playsinline muted></video>
-          <canvas id="oziCamCanvas" width="96" height="72"></canvas>
-          <span class="cam-hint">1. Tap PREVIEW CAMERA. 2. Hold a colored paper where Ozi can see it. 3. Tap the paper in the picture. 4. Pick a button below!</span>
-        </div>
-        <div class="button-row">
-          <button class="modal-secondary" id="oziCamPreview" type="button">TURN ON CAMERA</button>
-          <button class="modal-primary follow-btn" id="oziFollowStart" type="button">FOLLOW ME <small>Ozi chases my color card</small></button>
-          <button class="modal-secondary follow-btn" id="oziComeHere" type="button">COME HERE <small>Ozi drives to my card</small></button>
-          <button class="modal-secondary follow-btn" id="oziHandMode" type="button">SHOW THE CARD <small>hold it close to the camera</small></button>
-        </div>
-        <p class="follow-status" id="oziFollowStatus">Ready when you are: turn on the camera, tap your color card, then press a button.</p>
-      </fieldset>
-      <div class="warning-note"><b>HOW IT CONNECTS.</b> The bridge uses Ozobot's official Python packages with native Bluetooth LE (bleak/CoreBluetooth). Keep the official Ozobot Editor closed while connected — it holds the same Bluetooth link. Movement stays clamped (±120 mm, ±180°) and requires a fresh click or key press.</div>
-    </section>
-
-    <section class="modal" id="dnaModal" aria-modal="true" role="dialog" aria-label="Personality DNA">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">PERSONALITY DNA</div>
-      <h2 id="dnaTitle">A TINY MACHINE WITH OPINIONS.</h2>
-      <p class="modal-lead">These traits shape autonomous choices, reactions and generated thoughts. They drift through experience instead of behaving like decorative stats.</p>
-      <div class="dna-grid" id="dnaGrid"></div>
-      <div class="trait-combo" id="traitCombo"></div>
-    </section>
-
-    <section class="modal" id="dreamModal" aria-modal="true" role="dialog" aria-label="Dream Vault">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">DREAM VAULT</div>
-      <h2>THINGS OZI ABSOLUTELY DID NOT UNDERSTAND.</h2>
-      <p class="modal-lead">Dreams remix recent memories into tiny stories and stay attached to the same creature over time.</p>
-      <div class="dream-feature" id="dreamFeature"></div>
-      <div class="dream-list" id="dreamList"></div>
-      <button class="modal-primary" id="generateDream">GENERATE TONIGHT'S DREAM</button>
-    </section>
-
-    <section class="modal" id="danceModal" aria-modal="true" role="dialog" aria-label="Dance Deck">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">DANCE DECK</div>
-      <h2>CHOREOGRAPHY, VOLUNTARILY NONSENSE.</h2>
-      <p class="modal-lead">Pick a routine and Ozi performs it — lights, tones and questionable confidence. Secret routines stay hidden until Ozi invents them.</p>
-      <div class="deck-list" id="danceDeck"></div>
-    </section>
-
-    <section class="modal" id="arcadeModal" aria-modal="true" role="dialog" aria-label="Arcade">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">ARCADE // MISSION DECK</div>
-      <h2>SEVEN TINY MISSIONS.</h2>
-      <p class="modal-lead">Every mission is safety-clamped. FLOOR-stamped missions move best on an open floor; on the desk they degrade to lights, tones and turns.</p>
-      <div class="mission-grid" id="missionGrid"></div>
-      <div class="game-stage" id="gameStage"><p class="stage-line">PICK A MISSION ABOVE // results appear here.</p></div>
-    </section>
-
-    <section class="modal" id="songbookModal" aria-modal="true" role="dialog" aria-label="Songbook">
-      <button class="modal-close" data-close-modal>×</button>
-      <div class="modal-kicker">SONGBOOK // ORIGINALS ONLY</div>
-      <h2>TINY MELODIES, ZERO ROYALTIES.</h2>
-      <p class="modal-lead">Every song is an original composed for this creature. Unheard tracks show as ??? until Ozi performs them at least once.</p>
-      <div class="songbook" id="songList"></div>
-    </section>
-  </div>
-
-  <div class="request-card" id="oziRequestCard" role="status" aria-live="polite" hidden></div>
-
-  <div class="estop-banner" id="oziEstopBanner" hidden>
-    <b>ALL STOPPED</b>
-    <span id="oziEstopReason"></span>
-    <button id="oziEstopReset" type="button">START AGAIN</button>
-  </div>
-
-  <button class="estop" id="oziEStop" type="button" hidden aria-label="Emergency stop">STOP</button>
-
-  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="./runtime-guard.js"></script>
-  <script src="./pet/core.js"></script>
-  <script src="./pet/perform.js"></script>
-  <script src="./pet/games.js"></script>
-  <script src="./pet/follow.js"></script>
-  <script src="./app.js"></script>
+    <section id="createView" class="view-section" hidden aria-labelledby="createTitle"><div class="section-heading"><div><span class="eyebrow">YOUR ROBOT. YOUR CHOREOGRAPHY.</span><h2 id="createTitle">Make a move.</h2></div><p>Tap moves to build a tiny masterpiece.</p></div><div class="builder"><div><div class="move-palette" id="movePalette"></div><p class="muted">Up to 8 moves and 7 seconds. Big personality fits in a small routine.</p></div><div class="recipe"><div class="recipe-heading"><h3>Your masterpiece</h3><span id="recipeDuration">0.0 / 7 seconds</span></div><ol id="recipeList" class="recipe-list"></ol><p id="emptyRecipe">Start with a wiggle. Everything’s better with a wiggle.</p><div class="builder-actions"><button id="runRecipe" class="button coral" disabled>Perform my moves ↗</button><button id="undoMove" class="text-button" disabled>Undo</button><button id="clearRecipe" class="text-button" disabled>Clear</button></div><p id="builderNote" role="status"></p></div></div></section>
+    <section id="badgesView" class="view-section" hidden aria-labelledby="badgesTitle"><div class="section-heading"><div><span class="eyebrow">SMALL WINS. BIG GRINS.</span><h2 id="badgesTitle">Your little hall of fame.</h2></div><p id="gamesPlayed">Your first adventure is waiting.</p></div><div id="badgeShelf" class="badge-shelf"></div></section>
+    <footer><span class="footer-brand">ozi <span>Made for a little more play.</span></span><span id="footerMode">Screen play · No robot connected</span><button id="settingsButton" class="text-button">Grown-up corner ↗</button></footer>
+  </main>
+  <div class="stop-dock" id="stopDock" hidden><span id="stopLabel">Ozi is playing</span><button id="stopButton" aria-label="Stop Ozi and end the activity"><span aria-hidden="true">■</span> STOP <kbd>Esc</kbd></button></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="connectionDialog" class="setup-dialog" aria-labelledby="setupTitle"><button class="close-dialog" data-close="connectionDialog" aria-label="Close setup">×</button><span class="eyebrow">FOR YOUR REAL LITTLE ROBOT</span><h2 id="setupTitle">Bring Ozi to the party.</h2><p>Turn on your Evo nearby. The local bridge connects it to this playroom.</p><form id="connectForm"><label for="bridgeKey">Your bridge key</label><input id="bridgeKey" name="bridge-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the key from your bridge"><div class="setup-actions"><button id="pairButton" class="button coral" type="submit">Connect my Evo ↗</button><button id="disconnectButton" class="text-button" type="button" hidden>Disconnect</button></div></form><p id="connectionMessage" class="setup-status" role="status">Screen play works right away, even without a robot.</p><div class="floor-setup"><h3>Give those wheels some room.</h3><p>Place Ozi on a clear, flat floor, away from stairs. An adult should be nearby.</p><label class="check-label"><input id="floorConsent" type="checkbox"> Ozi is on a clear floor and we’re ready to play.</label><button id="armFloor" class="button ink" disabled>Enable floor play ↗</button><button id="deskMode" class="text-button">Use lights only</button><p class="muted">Floor play unlocks scoots and spins. STOP locks the wheels again.</p></div><details><summary>Need the local bridge?</summary><p>On this Mac, open the Ozi project and run <code>bridge/install-launch-agent.sh</code>. It starts the bridge and prints your key. The website cannot install it for you.</p><p id="bridgeVersion">This playroom needs bridge version 4 for floor play.</p></details><button id="screenPlay" class="text-button">Continue with screen play →</button></dialog>
+  <dialog id="settingsDialog" class="setup-dialog" aria-labelledby="settingsTitle"><button class="close-dialog" data-close="settingsDialog" aria-label="Close grown-up corner">×</button><span class="eyebrow">GROWN-UP CORNER</span><h2 id="settingsTitle">A few little details.</h2><form id="nameForm"><label for="petName">What should we call your bot?</label><input id="petName" maxlength="24" autocomplete="off" placeholder="Ozi"><button class="button ink" type="submit">Save name</button></form><div class="settings-facts"><h3>How we play</h3><p>Games last a few rounds. Scores and badges stay on this device. Screen play never claims your real Evo is connected.</p><p>Robot sounds come from this device. Physical movement starts only after floor setup and a game or trick button. Closing a game or hiding this tab stops the activity.</p><p>Color Quest reads colored paper beneath the Evo. Treasure Trail is a route-planning game, not a map of your actual room.</p></div><button id="openConnectionFromSettings" class="button coral">Set up my Evo ↗</button></dialog>
+  <noscript><p class="noscript-message">Ozi needs JavaScript to play. Please enable it in your browser.</p></noscript>
 </body>
 </html>

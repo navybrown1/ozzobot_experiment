@@ -24,11 +24,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 from typing import Any
 
 HOST = "127.0.0.1"
 PORT = 8787
 MAX_BODY_BYTES = 8192
+PROTOCOL_VERSION = 4
 
 
 def _reject_constant(name: str) -> float:
@@ -74,6 +76,14 @@ def require_finite(value: Any, name: str) -> float:
     return number
 
 
+class _OperationCancelled(RuntimeError):
+    pass
+
+
+class _BudgetExpired(_OperationCancelled):
+    pass
+
+
 class _BleLoop:
     """ONE permanent asyncio event loop on ONE daemon thread.
 
@@ -96,18 +106,31 @@ class _BleLoop:
         self.thread = threading.Thread(target=self.loop.run_forever, name="ozo-ble", daemon=True)
         self.thread.start()
 
-    def call(self, coro, timeout: float):
+    def call(self, coro, timeout: float, cancel: threading.Event | None = None):
+        if cancel is not None and cancel.is_set():
+            coro.close()
+            raise _OperationCancelled("Operation stopped")
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        try:
-            return future.result(timeout)
-        except FuturesTimeoutError:
-            future.cancel()
-            raise TimeoutError(f"BLE operation exceeded {timeout}s ceiling and was cancelled") from None
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancel is not None and cancel.is_set():
+                future.cancel()
+                raise _OperationCancelled("Operation stopped")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                raise TimeoutError(f"BLE operation exceeded {timeout}s ceiling and was cancelled")
+            try:
+                return future.result(min(remaining, 0.025) if cancel is not None else remaining)
+            except FuturesTimeoutError:
+                # A TimeoutError raised by the SDK is not a polling timeout.
+                if future.done():
+                    raise
 
 
 # ---------------------------------------------------------------------------
 # Test-only fake async robot (OZI_FAKE_BLE=1). Lets the QA suites exercise the
-# REAL hardware plumbing (owned loop, timeouts, cancellation, auto-resurrect)
+# REAL hardware plumbing (owned loop, timeouts, cancellation, link loss)
 # without a radio. Hooks: OZI_FAKE_HANG_AT_OP=k makes op k hang until cancelled;
 # OZI_FAKE_DROP_AT_OP=k makes op k raise a bleak-shaped "Not connected".
 class _FakeBleakError(Exception):
@@ -121,9 +144,6 @@ _FakeBleakError.__qualname__ = "BleakError"
 class _FakeSample:
     def __init__(self, value: Any) -> None:
         self.value = value
-
-    def __bool__(self) -> bool:
-        return bool(self.value)
 
 
 class _FakeRegion:
@@ -148,12 +168,17 @@ class _FakeEvo:
         self._hang_at = hang_at
         self._drop_at = drop_at
         self._ops = 0
+        # Match the installed native SDK's passive connection-state path.
+        self._client = SimpleNamespace(is_connected=True)
+        self._driver = SimpleNamespace(
+            _control=SimpleNamespace(_channel=SimpleNamespace(_client=self._client)))
 
     async def _hook(self) -> None:
         self._ops += 1
         if self._hang_at and self._ops == self._hang_at:
             await asyncio.sleep(45)
         if self._drop_at and self._ops == self._drop_at:
+            self._client.is_connected = False
             raise _FakeBleakError("Not connected")
         await asyncio.sleep(0.02)
 
@@ -193,18 +218,19 @@ class RobotController:
         self.sdk_error: str | None = None
         self.surface = "unclassified"
         self._imports: dict[str, Any] = {}
-        self._abort = False
+        self.play_mode = "desk"
+        # Each admitted operation retains its event. STOP sets that event and
+        # creates a new one; queued work can never clear its own cancellation.
+        self._cancel_event = threading.Event()
+        self._operation = threading.local()
         # A routine owns the hardware for its whole duration.  The browser also
         # polls proximity in the background, so keep that read out of the
         # hardware queue while a routine is running instead of letting it
         # time out behind movement and poison the worker.
         self._sequence_guard = threading.Lock()
         self._sequence_active = False
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._last_proximity: dict[str, Any] = {"ok": True, "available": False}
-        self._recovery_lock = threading.Lock()
-        self._timeout_strikes: list[float] = []
-        self._lifetime_timeouts = 0
         # Serialization queue: hardware ops run one-at-a-time on this worker.
         # Unlike before, a hung SDK call can no longer wedge this thread —
         # _BleLoop cancels the task at its inner ceiling (2026-08-22 council).
@@ -238,118 +264,110 @@ class RobotController:
         # so the ladder (2 attempts x ~50s + settle) must fit under this.
         "_connect_impl": 110.0,
         "_disconnect_impl": 10.0,
-        "_halt_motion": 6.0,
-        "_sequence_impl": 30.0,
+        "_sequence_impl": 10.0,
     }
     DEFAULT_TIMEOUT = 12.0
-    # Inner ceilings are always below the outer _submit ceiling so the owned
-    # loop cancels a hung task BEFORE the worker-level timeout machinery would
-    # fire — the replacement path should now be unreachable dead weight.
+    SEQUENCE_BUDGET = 8.0
+    # Leave room for cancellation before the worker-level timeout.
     INNER_MARGIN = 2.0
 
-    def _sdk_call(self, coro, timeout: float | None = None):
+    def _sdk_call(self, operation, *args, timeout: float | None = None):
         if timeout is None:
             timeout = max(self.DEFAULT_TIMEOUT - self.INNER_MARGIN, 1.0)
-        return self._ble.call(coro, timeout)
+        self._check_operation()
+        cancel = getattr(self._operation, "cancel", None)
+        deadline = getattr(self._operation, "deadline", None)
+        if deadline is not None:
+            timeout = min(timeout, max(0.0, deadline - time.monotonic()))
 
-    def _submit(self, fn, *args) -> Any:
-        """Run a controller operation on the single hardware worker.
+        async def dispatch():
+            # Recheck on the BLE loop: the worker may have been descheduled
+            # after admission. Create the SDK coroutine only after these
+            # checks, so cancellation before dispatch cannot leak or run it.
+            if cancel is not None and cancel.is_set():
+                raise _OperationCancelled("Operation stopped")
+            if deadline is not None and time.monotonic() >= deadline:
+                raise _BudgetExpired("Sequence time budget exhausted")
+            return await operation(*args)
 
-        Bounded wait + poisoned-worker replacement: if the SDK hangs past its
-        ceiling, return an error to the caller and swap in a fresh executor so
-        later jobs are not stuck behind the hung thread.
-        """
-        import threading, time, traceback
-        name = getattr(fn, "__name__", str(fn))
-        timeout = self.OP_TIMEOUTS.get(name, self.DEFAULT_TIMEOUT)
-        ts = lambda: time.strftime("%H:%M:%S")
-        print(f"[hw {ts()}] submit {name} on worker (timeout={timeout}s)", flush=True)
-        dispatch_fn = self._maybe_arm_test_drop(fn, name)
-        future = self._hw.submit(dispatch_fn, *args)
-        t0 = time.monotonic()
         try:
-            result = future.result(timeout=timeout)
-            print(f"[hw {ts()}] done {name} in {time.monotonic() - t0:.2f}s", flush=True)
-            return result
-        except FuturesTimeoutError:
-            # A connect timeout is an EXPECTED, user-initiated slow path — never
-            # treat it as an orphaned-link emergency that kills the process or
-            # churns the executor (2026-08-22e C10).
-            if name == "_connect_impl":
-                print(f"[hw {ts()}] TIMEOUT {name} after {timeout}s — connect gave up (no escalation)", flush=True)
-                raise RuntimeError(
-                    f"Hardware operation '{name}' timed out. The Bluetooth link was stuck; "
-                    "the bridge recovered itself — try connecting again."
-                ) from None
-            print(f"[hw {ts()}] TIMEOUT {name} after {timeout}s — replacing wedged worker", flush=True)
-            with self._recovery_lock:
-                self._replace_worker_locked()
-                escalate = self._escalate_locked()
-                if escalate:
-                    # The OS-level Bluetooth link is orphaned; only a process exit
-                    # reliably releases it. Try to stop motion first, best effort.
-                    try:
-                        self._hw.submit(self._halt_motion).result(timeout=4)
-                        self.connected = False
-                    except Exception:
-                        print("[hw] halt unconfirmed before recovery exit", flush=True)
-                if escalate:
-                    print("[hw] repeated timeouts — exiting so supervisor restarts a clean "
-                          "bridge (only a process exit reliably releases the Bluetooth link)", flush=True)
-                    print(f"[hw {time.strftime('%H:%M:%S')}] recovery exit", flush=True)
-                    os._exit(75)
-            raise RuntimeError(
-                f"Hardware operation '{name}' timed out. The Bluetooth link was stuck; "
-                "the bridge recovered itself — try connecting again."
-            ) from None
+            return self._ble.call(dispatch(), timeout, cancel)
+        except TimeoutError:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise _BudgetExpired("Sequence time budget exhausted") from None
+            raise
         except Exception as exc:
-            # Silent auto-resurrect: BLE links do drop mid-session (2026-08-22
-            # 17:57 incident — link died between two dances). If the robot was
-            # believed alive and the failure says otherwise, rebuild the
-            # connection once and retry the operation before giving up.
-            if (
-                self.connected
-                and name not in ("_connect_impl", "_disconnect_impl", "_halt_motion")
-                and self._is_link_dead(exc)
-            ):
-                print(f"[hw {ts()}] LINK LOST during {name} — attempting silent auto-resurrect", flush=True)
-                recovered = False
-                try:
-                    self._bury_link()
-                    self._hw.submit(self._connect_once_for_recovery).result(timeout=20.0)
-                    recovered = True
-                except Exception as resurrect_exc:
-                    print(
-                        f"[hw {ts()}] auto-resurrect FAILED — giving up so the app sees the real error:\n"
-                        f"{resurrect_exc}",
-                        flush=True,
-                    )
-                if recovered and name == "_sequence_impl":
-                    # A routine may already have moved, turned, or changed an
-                    # LED before the link dropped. Never replay the whole
-                    # routine after recovery; that could duplicate movement.
-                    print(f"[hw {ts()}] auto-resurrect OK — routine abandoned without replay", flush=True)
-                    raise RuntimeError(
-                        "The Evo link recovered, but this routine was stopped safely and will not be replayed."
-                    ) from None
-                if recovered:
-                    print(f"[hw {ts()}] auto-resurrect OK — retrying {name}", flush=True)
-                    t1 = time.monotonic()
-                    result = self._hw.submit(fn, *args).result(timeout=timeout)
-                    print(f"[hw {ts()}] done {name} (retried) in {time.monotonic() - t1:.2f}s", flush=True)
-                    return result
-            print(f"[hw {ts()}] FAILED {name}:\n{traceback.format_exc()}", flush=True)
+            if self._is_link_dead(exc):
+                self._mark_link_lost()
             raise
 
-    _RESURRECT_EXEMPT = ("_connect_impl", "_disconnect_impl", "_halt_motion",
-                         "_proximity_impl", "_status_impl")
+    def _submit(self, fn, *args, routine: bool = False) -> Any:
+        """Serialize work, retaining cancellation from admission through execution.
+
+        Never retry an operation: an error cannot tell us whether a motor
+        command already reached the robot. Keep one worker even on timeout,
+        rather than allowing a replacement to race a still-running old worker.
+        """
+        name = getattr(fn, "__name__", str(fn))
+        timeout = self.OP_TIMEOUTS.get(name, self.DEFAULT_TIMEOUT)
+        with self._state_lock:
+            if routine:
+                if not self._sequence_guard.acquire(blocking=False):
+                    raise RuntimeError("A dance routine is already running")
+                self._sequence_active = True
+            cancel = self._cancel_event
+
+            def run():
+                self._operation.cancel = cancel
+                self._operation.deadline = None
+                try:
+                    return dispatch_fn(*args)
+                except Exception as exc:
+                    # Invalidate on the worker before another queued job can
+                    # start. Sensor errors swallowed by proximity are handled
+                    # at the SDK boundary instead.
+                    if self._is_link_dead(exc) and self.connected:
+                        self._mark_link_lost()
+                    raise
+                finally:
+                    self._operation.cancel = None
+                    self._operation.deadline = None
+                    if routine:
+                        self._finish_routine()
+
+            try:
+                dispatch_fn = self._maybe_arm_test_drop(fn, name)
+                future = self._hw.submit(run)
+            except Exception:
+                if routine:
+                    self._finish_routine()
+                raise
+            if routine:
+                # A cancelled queued job never enters run()'s finally block.
+                # Running jobs retain the guard even if the HTTP call times out.
+                future.add_done_callback(lambda f: self._finish_routine() if f.cancelled() else None)
+        try:
+            return future.result(timeout=timeout)
+        except (FuturesTimeoutError, TimeoutError):
+            cancel.set()
+            future.cancel()
+            self.stop()
+            raise RuntimeError(f"Hardware operation '{name}' timed out; operation cancelled") from None
+
+    def _finish_routine(self) -> None:
+        with self._state_lock:
+            self._sequence_active = False
+            self._sequence_guard.release()
+
+    _TEST_DROP_EXEMPT = ("_connect_impl", "_disconnect_impl", "_halt_motion",
+                        "_proximity_impl", "_status_impl")
 
     def _maybe_arm_test_drop(self, fn, name):
         """Test hook (OZI_TEST_DROP_AT_OP=k): make the k-th counted hardware op
-        raise a bleak 'Not connected' error once, to exercise auto-resurrect
+        raise a bleak 'Not connected' error once, to exercise link loss
         without real radio flakiness."""
         drop_at = int(os.environ.get("OZI_TEST_DROP_AT_OP", "0") or 0)
-        if not drop_at or name in self._RESURRECT_EXEMPT:
+        if not drop_at or name in self._TEST_DROP_EXEMPT:
             return fn
         self._op_counter = getattr(self, "_op_counter", 0) + 1
         if self._op_counter != drop_at or getattr(self, "_drop_fired", False):
@@ -357,11 +375,7 @@ class RobotController:
         self._drop_fired = True
 
         def boom(*a, **kw):
-            try:
-                import bleak
-                raise bleak.BleakError("Not connected")
-            except ImportError:
-                raise RuntimeError("simulated link loss (bleak unavailable)")
+            raise _FakeBleakError("Not connected")
 
         return boom
 
@@ -377,8 +391,8 @@ class RobotController:
                 # surfaces the next command as "Service Discovery has not
                 # been performed yet" rather than "Not connected". Treat
                 # both forms as the same stale-link condition so the bridge
-                # can invalidate the handle and recover once, instead of
-                # falsely keeping the browser in CONNECTED state.
+                # invalidates the session instead of falsely keeping the
+                # browser in CONNECTED state. Reconnect is always explicit.
                 if (
                     "not connected" in text
                     or "disconnect" in text
@@ -393,7 +407,10 @@ class RobotController:
         handle, self._handle = self._handle, None
         self.evo = None
         self.robot = None
-        self.connected = False
+        with self._state_lock:
+            self.connected = False
+            self.play_mode = "desk"
+            self._last_proximity = {"ok": True, "available": False}
         self._ctx = None
         if handle is not None:
             try:
@@ -401,51 +418,21 @@ class RobotController:
             except Exception:
                 pass
 
-    def _replace_worker_locked(self) -> None:
-        """Discard the executor whose thread is stuck inside SDK code.
-
-        cancel_futures: jobs still queued behind the wedged op must NOT run later
-        on the zombie thread and mutate controller state concurrently with the
-        fresh worker (the BLE SDK is not thread-safe).
-        """
-        old = self._hw
-        self._hw = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ozo-hw")
-        old.shutdown(wait=False, cancel_futures=True)
-
-    def _escalate_locked(self) -> bool:
-        """True when timeouts cluster (orphaned BLE link — exit and let the
-        supervisor restart us clean), or when they keep recurring over the
-        bridge's lifetime (slow leak of un-killable zombie threads)."""
-        now = time.monotonic()
-        recent = [t for t in self._timeout_strikes if now - t < 120]
-        recent.append(now)
-        self._timeout_strikes = recent
-        self._lifetime_timeouts += 1
-        return len(recent) >= 2 or self._lifetime_timeouts >= 5
-
     @property
     def mode(self) -> str:
         return "simulator" if self.simulate else "hardware"
 
     def connect(self) -> dict[str, Any]:
+        # Detect a dead old handle before admitting the explicit new request.
+        self.status()
         return self._submit(self._connect_impl)
 
-    def _connect_once_for_recovery(self) -> dict[str, Any]:
-        """Short, non-replaying reconnect used after a mid-operation link drop."""
-        try:
-            self._sdk_call(self._async_connect(), timeout=15.0)
-            # A reconnect is not usable until CoreBluetooth has rebuilt the
-            # GATT tree. Probe with a harmless LED-off write before exposing
-            # the recovered state to the browser.
-            self._probe_hardware_ready()
-            return self.status()
-        except Exception:
-            self._bury_link()
-            raise
-
     def _connect_impl(self) -> dict[str, Any]:
+        self._check_operation()
         if self.connected:
             return self.status()
+        if self._handle is not None or self.evo is not None:
+            self._bury_link()
         if self.simulate:
             self.connected = True
             return self.status()
@@ -463,17 +450,15 @@ class RobotController:
         last_err = None
         for attempt in range(1, 3):
             try:
-                self._sdk_call(self._async_connect(), timeout=50.0)
+                self._sdk_call(self._async_connect, timeout=50.0)
                 self._probe_hardware_ready()
                 return self.status()
             except Exception as exc:
                 last_err = exc
                 self._bury_link()  # now effective: _async_connect pre-assigned the handle
+                self._check_operation()  # STOP also cancels a pending connect/retry.
                 if attempt < 2:
-                    try:
-                        self._ble.call(asyncio.sleep(3.0), 4.0)  # let the OS BLE stack settle
-                    except Exception:
-                        pass
+                    self._sleep(3.0)  # let the OS BLE stack settle
         raise RuntimeError(
             "The SDK loaded but did not open the Evo connection. "
             "The current ozobot-evo package is still experimental, so this may depend on its runtime driver. "
@@ -497,17 +482,18 @@ class RobotController:
         LEDMask = self._imports["LEDMask"]
         RawColor = self._imports["RawColor"]
         self._sdk_call(
-            self.evo.set_led(LEDMask.ALL_ROBOT, RawColor(0.0, 0.0, 0.0)),
+            self.evo.set_led, LEDMask.ALL_ROBOT, RawColor(0.0, 0.0, 0.0),
             timeout=8.0,
         )
 
     def disconnect(self) -> dict[str, Any]:
+        self.stop()
         return self._submit(self._disconnect_impl)
 
     def _disconnect_impl(self) -> dict[str, Any]:
         try:
             self._sdk_call(
-                self._async_close_handle(),
+                self._async_close_handle,
                 timeout=self.OP_TIMEOUTS["_disconnect_impl"] - self.INNER_MARGIN,
             )
         except Exception:
@@ -515,7 +501,7 @@ class RobotController:
         self._ctx = None
         self.evo = None
         self._handle = None
-        self.connected = False
+        self._mark_link_lost()
         return self.status()
 
     async def _async_close_handle(self) -> None:
@@ -525,41 +511,122 @@ class RobotController:
             finally:
                 self._handle = None
 
+    @staticmethod
+    def _client_connected(evo) -> bool:
+        """No BLE I/O. Shape verified against the installed native Ozobot SDK.
+
+        Evo/LineFollower._driver -> EvoNativeDriver._control ->
+        AsyncControl._channel -> Characteristic._client (BleakClient).
+        Bleak's CoreBluetooth is_connected property reads peripheral.state().
+        An unknown driver shape fails closed, never as a truthy method/object.
+        """
+        try:
+            return evo._driver._control._channel._client.is_connected is True
+        except Exception:
+            return False
+
+    def _cancel_operations_locked(self) -> None:
+        self._cancel_event.set()
+        self._cancel_event = threading.Event()
+        self.play_mode = "desk"
+
+    def _mark_link_lost(self) -> None:
+        with self._state_lock:
+            self.connected = False
+            self._cancel_operations_locked()
+            self._last_proximity = {"ok": True, "available": False}
+
+    def _connected_locked(self) -> bool:
+        if self.connected and not self.simulate and not self._client_connected(self.evo):
+            self._mark_link_lost()
+        return self.connected
+
     def status(self) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "mode": self.mode,
-            "connected": self.connected,
-            "robot": self.robot_name,
-            "sdk_available": bool(self._imports) or self.simulate,
-            "sdk_error": self.sdk_error,
-            "surface": self.surface,
-        }
+        # Passive: no queue, scan, GATT probe, reconnect, halt, or other write.
+        with self._state_lock:
+            connected = self._connected_locked()
+            return {
+                "ok": True,
+                "protocol_version": PROTOCOL_VERSION,
+                "mode": self.mode,
+                "connected": connected,
+                "play_mode": self.play_mode,
+                "robot": self.robot_name,
+                "sdk_available": bool(self._imports) or self.simulate,
+                "sdk_error": self.sdk_error,
+                "surface": self.surface,
+            }
+
+    def set_play_mode(self, mode: Any, floor_confirmed: Any = False) -> dict[str, Any]:
+        if mode not in ("desk", "floor"):
+            raise ValueError("'mode' must be 'desk' or 'floor'")
+        if mode == "desk":
+            self.stop()
+        else:
+            if floor_confirmed is not True:
+                raise ValueError("Floor mode requires floor_confirmed: true")
+            with self._state_lock:
+                if not self._connected_locked():
+                    raise RuntimeError("Evo is not connected")
+                self.play_mode = "floor"
+        return self.status()
+
+    def _check_operation(self) -> None:
+        cancel = getattr(self._operation, "cancel", None)
+        if cancel is not None and cancel.is_set():
+            raise _OperationCancelled("Operation stopped")
+        deadline = getattr(self._operation, "deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _BudgetExpired("Sequence time budget exhausted")
+
+    def _sleep(self, seconds: float) -> float:
+        """Interruptible sleep; return the actual clipped wait for reporting."""
+        self._check_operation()
+        deadline = getattr(self._operation, "deadline", None)
+        if deadline is not None:
+            seconds = min(seconds, max(0.0, deadline - time.monotonic()))
+        started = time.monotonic()
+        cancel = getattr(self._operation, "cancel", None)
+        if cancel is None:
+            time.sleep(seconds)
+        else:
+            cancel.wait(seconds)
+        return min(seconds, time.monotonic() - started)
 
     def _require(self) -> None:
-        if not self.connected:
-            raise RuntimeError("Evo is not connected")
+        self._check_operation()
+        with self._state_lock:
+            if not self._connected_locked():
+                raise RuntimeError("Evo is not connected")
+
+    def _require_motion(self) -> None:
+        self._require()
+        with self._state_lock:
+            if self.play_mode != "floor":
+                raise RuntimeError("Motion requires confirmed floor mode")
 
     def move(self, distance: float, speed: float) -> dict[str, Any]:
-        self._require()
+        self._require_motion()
         distance = clamp(require_finite(distance, "distance"), -120, 120)
         speed = clamp(abs(require_finite(speed, "speed")), 20, 80)
         if self.simulate:
-            time.sleep(min(abs(distance) / max(speed, 1), 0.35))
+            self._sleep(min(abs(distance) / max(speed, 1), 0.35))
+            self._check_operation()
         else:
             evo = self.evo
-            self._sdk_call(evo.move(distance, speed))
+            self._sdk_call(evo.move, distance, speed)
         return {"ok": True, "action": "move", "distance": distance, "speed": speed}
 
     def turn(self, angle: float, speed: float) -> dict[str, Any]:
-        self._require()
+        self._require_motion()
         angle = clamp(require_finite(angle, "angle"), -180, 180)
         speed = clamp(abs(require_finite(speed, "speed")), 30, 120)
         if self.simulate:
-            time.sleep(min(abs(angle) / max(speed, 1), 0.35))
+            self._sleep(min(abs(angle) / max(speed, 1), 0.35))
+            self._check_operation()
         else:
             evo = self.evo
-            self._sdk_call(evo.rotate(angle, speed))
+            self._sdk_call(evo.rotate, angle, speed)
         return {"ok": True, "action": "turn", "angle": angle, "speed": speed}
 
     def led(self, name: str) -> dict[str, Any]:
@@ -569,7 +636,7 @@ class RobotController:
             LEDMask = self._imports["LEDMask"]
             RawColor = self._imports["RawColor"]
             evo = self.evo
-            self._sdk_call(evo.set_led(LEDMask.ALL_ROBOT, RawColor(*rgb)))
+            self._sdk_call(evo.set_led, LEDMask.ALL_ROBOT, RawColor(*rgb))
         return {"ok": True, "action": "led", "color": str(name)}
 
     def tone(self, frequency: float, duration: float) -> dict[str, Any]:
@@ -583,7 +650,8 @@ class RobotController:
             # a cosmetic beep must never take down movement or a mission.
             pass
         else:
-            time.sleep(duration)
+            self._sleep(duration)
+            self._check_operation()
         return {"ok": True, "action": "tone", "frequency": frequency, "duration": duration}
 
     def read_color(self) -> dict[str, Any]:
@@ -591,7 +659,7 @@ class RobotController:
         if self.simulate:
             self.surface = secrets.choice(["GREEN", "BLUE", "YELLOW", "PURPLE", "UNKNOWN"])
         else:
-            sample = self._sdk_call(self.evo.data.surface_color.read(), timeout=6.0)
+            sample = self._sdk_call(self.evo.data.surface_color.read, timeout=6.0)
             value = getattr(sample, "value", sample)
             self.surface = str(getattr(value, "name", value))
         return {"ok": True, "action": "read_color", "surface": self.surface}
@@ -604,7 +672,7 @@ class RobotController:
         return {"ok": True, "action": "hello"}
 
     def dance(self) -> dict[str, Any]:
-        self._require()
+        self._require_motion()
         self.led("amber")
         self.turn(45, 90)
         self.turn(-90, 100)
@@ -651,20 +719,7 @@ class RobotController:
             require_finite(step["wait"], "wait")
 
     def sequence(self, steps: Any) -> dict[str, Any]:
-        # Duplicate routine requests used to queue behind the first routine.
-        # Combined with proximity polling, that could trigger the timeout
-        # recovery path while the robot was still dancing.  Reject duplicates
-        # explicitly and let the active routine finish (or be stopped).
-        if not self._sequence_guard.acquire(blocking=False):
-            raise RuntimeError("A dance routine is already running")
-        with self._state_lock:
-            self._sequence_active = True
-        try:
-            return self._submit(self._sequence_impl, steps)
-        finally:
-            with self._state_lock:
-                self._sequence_active = False
-            self._sequence_guard.release()
+        return self._submit(self._sequence_impl, steps, routine=True)
 
     def _sequence_impl(self, steps: Any) -> dict[str, Any]:
         if not isinstance(steps, list):
@@ -682,68 +737,95 @@ class RobotController:
             self._validate_sequence_step(index, step)
             plan.append((index, step))
 
-        self._abort = False
-        started = time.monotonic()
-        budget = 8.0
+        self._operation.deadline = time.monotonic() + self.SEQUENCE_BUDGET
         results: list[dict[str, Any]] = []
-        truncated = False
-        for index, step in plan:
-            if self._abort or time.monotonic() - started >= budget:
-                truncated = True
-                break
-            actions: list[dict[str, Any]] = []
-            if "led" in step:
-                actions.append(self.led(str(step["led"])))
-            if "tone" in step:
-                actions.append(self.tone(step["tone"].get("frequency", 660), step["tone"].get("duration", 0.08)))
-            if "move" in step:
-                actions.append(self.move(step["move"].get("distance", 40), step["move"].get("speed", 50)))
-            if "turn" in step:
-                actions.append(self.turn(step["turn"].get("angle", 35), step["turn"].get("speed", 70)))
-            if "wait" in step:
-                seconds = clamp(require_finite(step["wait"], "wait"), 0.0, 1.5)
-                slept = max(0.0, min(seconds, budget - (time.monotonic() - started)))
-                if slept > 0:
-                    time.sleep(slept)
-                actions.append({"ok": True, "action": "wait", "seconds": slept})
-            results.append({"index": index, "ok": True, "actions": actions})
+        truncated = client_steps > 16
+        try:
+            self._check_operation()
+            # Reject a motor-bearing routine in desk mode before its LEDs or
+            # tones execute. Primitive methods also enforce this at dispatch.
+            if any("move" in step or "turn" in step for _, step in plan):
+                self._require_motion()
+            for index, step in plan:
+                actions: list[dict[str, Any]] = []
+                try:
+                    for key in self.SEQUENCE_KEYS:
+                        if key not in step:
+                            continue
+                        self._check_operation()
+                        if key == "led":
+                            result = self.led(step[key])
+                        elif key == "tone":
+                            result = self.tone(step[key].get("frequency", 660), step[key].get("duration", 0.08))
+                        elif key == "move":
+                            result = self.move(step[key].get("distance", 40), step[key].get("speed", 50))
+                        elif key == "turn":
+                            result = self.turn(step[key].get("angle", 35), step[key].get("speed", 70))
+                        else:
+                            seconds = clamp(require_finite(step[key], "wait"), 0.0, 1.5)
+                            slept = self._sleep(seconds)
+                            result = {"ok": True, "action": "wait", "seconds": slept}
+                        actions.append(result)
+                        # Includes the last primitive/last wait: clipping that
+                        # final wait must still be reported as truncation.
+                        self._check_operation()
+                finally:
+                    if actions:
+                        results.append({"index": index, "ok": True, "actions": actions})
+        except _BudgetExpired:
+            truncated = True
+            self.stop()
+        except _OperationCancelled:
+            truncated = True
         return {
             "ok": True,
             "action": "sequence",
             "results": results,
-            "truncated": truncated or client_steps > 16,
+            "truncated": truncated,
             "steps_executed": len(results),
             "steps_received": client_steps,
         }
 
     def stop(self) -> dict[str, Any]:
-        # Instant: the abort flag is checked between sequence steps by the
-        # hardware worker itself; velocity-zeroing is best-effort.
-        self._abort = True
-        if not self.simulate and self.evo is not None:
-            try:
-                self._submit(self._halt_motion)
-            except Exception:
-                pass
+        with self._state_lock:
+            self._cancel_operations_locked()
+            # Submit on the owned BLE loop directly, never behind a routine.
+            self._halt_motion()
         return {"ok": True, "action": "stop"}
 
     def _halt_motion(self) -> None:
+        evo = self.evo
+        if self.simulate or not self._client_connected(evo):
+            return
+
+        async def halt():
+            try:
+                await asyncio.wait_for(evo.set_velocity(0, 0, 0), timeout=0.5)
+            except (Exception, asyncio.CancelledError):
+                pass  # STOP is best effort, including when the radio is gone.
+
+        coro = halt()
         try:
-            if not self.simulate and self.evo is not None:
-                evo = self.evo
-                self._ble.call(evo.set_velocity(0, 0, 0), 3.0)
+            asyncio.run_coroutine_threadsafe(coro, self._ble.loop)
         except Exception:
-            pass
+            coro.close()
 
     def proximity(self) -> dict[str, Any]:
         # Never enqueue a read behind a live routine.  Returning the last
         # sample keeps the safety UI responsive without competing with motion
         # on the single BLE worker.
         with self._state_lock:
+            if not self._connected_locked():
+                return {"ok": True, "available": False}
             if self._sequence_active:
                 return dict(self._last_proximity)
-        result = self._submit(self._proximity_impl)
+        try:
+            result = self._submit(self._proximity_impl)
+        except Exception:
+            result = {"ok": True, "available": False}
         with self._state_lock:
+            if not self._connected_locked():
+                result = {"ok": True, "available": False}
             self._last_proximity = dict(result)
         return result
 
@@ -752,22 +834,23 @@ class RobotController:
             return {"ok": True, "available": False}
         evo = self.evo
         try:
-            left, right = self._ble.call(self._async_proximity(evo), 4.0)
+            left, right = self._sdk_call(self._async_proximity, evo, timeout=4.0)
         except Exception:
             return {"ok": True, "available": False}
         return {"ok": True, "available": True, "front": {"left": left, "right": right}}
 
     @staticmethod
     async def _async_proximity(evo) -> tuple[Any, Any]:
-        left = bool(await evo.data.obstacle_left_front.read())
-        right = bool(await evo.data.obstacle_right_front.read())
+        # SDK Sample has no __bool__: Sample(0, timestamp) is truthy.
+        left = bool((await evo.data.obstacle_left_front.read()).value)
+        right = bool((await evo.data.obstacle_right_front.read()).value)
         return left, right
 
     def action(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._submit(self._action_impl, payload)
+        return self._submit(self._action_impl, payload, routine=payload.get("action") == "dance")
 
     def _action_impl(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._abort = False
+        self._check_operation()
         action = str(payload.get("action", ""))
         if action == "move":
             return self.move(payload.get("distance", 40), payload.get("speed", 50))
@@ -787,7 +870,7 @@ class RobotController:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "OzoPetBridge/0.3"
+    server_version = "OzoPetBridge/0.4"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stdout.write("[bridge] " + (fmt % args) + "\n")
@@ -875,6 +958,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 result = self.controller.action(payload)
             elif self.path == "/sequence":
                 result = self.controller.sequence(payload.get("steps"))
+            elif self.path == "/play-mode":
+                result = self.controller.set_play_mode(payload.get("mode"), payload.get("floor_confirmed", False))
             elif self.path == "/stop":
                 result = self.controller.stop()
             else:

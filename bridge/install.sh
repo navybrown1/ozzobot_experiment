@@ -12,9 +12,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="${0:A:h}"
+cd "$SCRIPT_DIR"
+
 OZO_REF="${OZO_REF:-caead3f59c862e329cbb0a96abc0ce2c0e21999b}"
 REPO="https://github.com/ozobot/python-libraries"
-PY="${PYTHON:-../bridge/.venv/bin/python}"
+PY="${PYTHON:-$SCRIPT_DIR/.venv/bin/python}"
 
 if [ ! -x "$PY" ]; then
   PYTHON_BIN="${PYTHON_BIN:-python3.13}"

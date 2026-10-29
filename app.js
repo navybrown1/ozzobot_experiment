@@ -1,1019 +1,226 @@
-/* OzoPet app glue — wires the behavior engine (pet/*.js) into the zine UI.
-   The engine owns state, needs, planner, memories, safety and hardware.
-   This file owns DOM: rendering, modals, request cards, arcade stage,
-   dance deck, songbook, floor-adventure panel, emergency stop. */
+/* Ozi Play Club: user-started games, a single cancellable activity, honest status. */
 (() => {
   'use strict';
-
-  const $ = (s, root = document) => root.querySelector(s);
-  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
-  const clamp = (n, min = 0, max = 100) => Math.min(max, Math.max(min, n));
-  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-  const escapeHTML = (str = '') => String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
-
-  const OP = window.OziPet || {};
-  const ENGINE = !!(OP.Bus && OP.Core && OP.Safety);
-  const Bus = OP.Bus;
-  let snap = null;
-
-  const zones = {
-    nest: { x: 20, y: 72, color: '#7ddcff', surface: 'blue/home' },
-    food: { x: 23, y: 30, color: '#74ffc8', surface: 'green/snack' },
-    play: { x: 76, y: 28, color: '#ffd36c', surface: 'yellow/play' },
-    mystery: { x: 76, y: 70, color: '#b780ff', surface: 'purple/unknown' },
-    center: { x: 50, y: 52, color: '#74ffc8', surface: 'unclassified' }
+  const N = window.OziClub, $ = id => document.getElementById(id);
+  const STORE = 'ozi-play-club-v4';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
+  const prefs = {
+    name: typeof saved.name === 'string' ? saved.name.slice(0, 24) : 'Ozi',
+    sound: saved.sound === true, scores: saved.scores && typeof saved.scores === 'object' ? saved.scores : {},
+    badges: Array.isArray(saved.badges) ? saved.badges.filter(x => typeof x === 'string') : [],
+    plays: Number.isSafeInteger(saved.plays) && saved.plays >= 0 ? saved.plays : 0,
+    recipe: Array.isArray(saved.recipe) ? saved.recipe.filter(x => N.MOVES[x]).slice(0, 8) : []
   };
-  const zoneLabel = z => ({ nest: 'nest edge', food: 'crunchbyte grove', play: 'play halo', mystery: 'mystery puddle', center: 'open desk' })[z] || z;
-  const getColor = name => ({ mint: '#74ffc8', violet: '#b780ff', amber: '#ffd36c', red: '#ff667c', blue: '#7ddcff', cyan: '#4bd69d' })[name] || '#74ffc8';
-
-  /* ================= toasts ================= */
-  function toast(title, text) {
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.innerHTML = `<b>${escapeHTML(title)}</b><p>${escapeHTML(text)}</p>`;
-    $('#toastStack').appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(12px)'; }, 3600);
-    setTimeout(() => el.remove(), 4100);
+  // Legacy pet and memory saves are intentionally untouched.
+  function save() { try { localStorage.setItem(STORE, JSON.stringify(prefs)); } catch { toast('This browser could not save progress. You can still play.'); } }
+  const clock = new N.Clock(), scene = new N.Scene($('playground'), clock), sound = new N.Sound(), bridge = new N.Bridge();
+  sound.enabled = prefs.sound;
+  let view = 'play', solo = null, runNumber = 0, toastTimer = null, lastFrame = performance.now(), advancing = false, currentGame = null;
+  const BADGES = [
+    { id: 'first', icon: '✦', title: 'Play pal', description: 'Finish your first game.' },
+    { id: 'freeze', icon: '♪', title: 'Freeze master', description: 'Finish three freeze rounds.' },
+    { id: 'copycat', icon: '✧', title: 'Memory magic', description: 'Match all five patterns.' },
+    { id: 'explorer', icon: '⌖', title: 'Little explorer', description: 'Win Color Quest or Treasure Trail.' },
+    { id: 'maker', icon: '〰', title: 'Move maker', description: 'Perform your own routine.' }
+  ];
+  const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
+  const button = (text, cls, fn) => { const n = el('button', text, cls); n.type = 'button'; n.addEventListener('click', fn); return n; };
+  function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
+  function award(id) { if (!prefs.badges.includes(id)) { prefs.badges.push(id); renderBadges(); } }
+  function busy() { return !!solo || activities.busy(); }
+  function refreshBusy() {
+    const active = busy();
+    $('stopDock').hidden = !active && !bridge.floor;
+    $('stopLabel').textContent = active ? (solo?.title || 'Game in progress') : 'Floor play is enabled';
+    document.querySelectorAll('.start-game,[data-trick]').forEach(b => { b.disabled = active || bridge.status === 'connecting'; });
+    $('helloButton').disabled = active || bridge.status === 'connecting';
+    $('runRecipe').disabled = active || !prefs.recipe.length || !!bridge.stopPending;
+    $('armFloor').disabled = !bridge.connected || !$('floorConsent').checked || active || bridge.protocol < 4 || !!bridge.stopPending;
+    $('deskMode').disabled = !bridge.connected || active;
   }
-
-  /* ================= creature visuals ================= */
-  let popTimer = null;
-  let recentThought = null;
-  function showThought(text) {
-    if (!$('#ambientText')) return;
-    recentThought = text;
-    $('#ambientText').textContent = text;
-    $('#mindText').textContent = text;
-    const pop = $('#thoughtPop');
-    pop.textContent = pick(['?', '!', '✦', '…', '♥']);
-    pop.classList.add('show');
-    clearTimeout(popTimer);
-    popTimer = setTimeout(() => pop.classList.remove('show'), 1100);
-  }
-  function setLed(color) {
-    $('#ozi').style.setProperty('--led', color);
-    $('#habitatMoodDot').style.background = color;
-    $('#habitatMoodDot').style.boxShadow = `0 0 10px ${color}`;
-  }
-  const animTimers = {};
-  const ANIM_CLASS = { bop: 'bop', spin: 'spin', nervous: 'nervous', wiggle: 'ozi-wiggle', shiver: 'ozi-shiver', nod: 'ozi-nod', startle: 'ozi-startle' };
-  function animate(name, duration = 900) {
-    const cls = ANIM_CLASS[name] || 'bop';
-    const el = $('#ozi');
-    clearTimeout(animTimers[cls]);
-    el.classList.remove('bop', 'spin', 'nervous', 'ozi-wiggle', 'ozi-shiver', 'ozi-nod', 'ozi-startle');
-    void el.offsetWidth;
-    el.classList.add(cls);
-    animTimers[cls] = setTimeout(() => el.classList.remove(cls), duration);
-  }
-  function moveVisuals(zoneName) {
-    const z = zones[zoneName] || zones.center;
-    $('#ozi').style.left = `${z.x}%`;
-    $('#ozi').style.top = `${z.y}%`;
-    $('#petShadow').style.left = `${z.x}%`;
-    $('#petShadow').style.top = `${z.y + 9}%`;
-    $('#zoneReadout').textContent = zoneLabel(zoneName);
-    $('#surfaceReadout').textContent = z.surface;
-    for (let i = 0; i < 6; i++) {
-      const dot = document.createElement('i');
-      dot.style.left = `${clamp(z.x + (Math.random() - .5) * 10, 4, 96)}%`;
-      dot.style.top = `${clamp(z.y + (Math.random() - .5) * 8, 4, 94)}%`;
-      $('#trail').appendChild(dot);
-      setTimeout(() => dot.remove(), 3100);
-    }
-  }
-
-  function selectZoneButton(zoneName) {
-    $$('[data-zone]').forEach(btn => {
-      const selected = btn.dataset.zone === zoneName;
-      btn.classList.toggle('zone-selected', selected);
-      btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    });
-  }
-
-  /* ================= rendering from engine snapshot ================= */
-  const bondLabel = n => n >= 92 ? 'trusted person' : n >= 82 ? 'chosen human' : n >= 70 ? 'growing bond' : n >= 55 ? 'new friend' : 'under review';
-  const relationshipThought = t => t > 90 ? 'Ozi expects you to return, bring interesting things, and prevent obviously bad desk decisions.'
-    : t > 78 ? 'Ozi trusts you enough to be annoying on purpose.'
-    : t > 65 ? 'Ozi is beginning to associate you with snacks, safety and entertainment.'
-    : 'Ozi is still deciding what kind of human you are.';
-  const archetype = d => d.mischief > 82 && d.curiosity > 80 ? 'curious trickster'
-    : d.affection > 82 && d.courage > 70 ? 'loyal guardian'
-    : d.independence > 82 && d.curiosity > 75 ? 'wild explorer'
-    : d.persistence > 80 && d.patience > 65 ? 'patient scout'
-    : 'odd little companion';
-  const dnaCode = d => [d.curiosity, d.mischief, d.weirdness].map(n => Math.round(n).toString(16).toUpperCase().padStart(2, '0')).join('-');
-  const NEED_KEYS = ['energy', 'hunger', 'affection', 'social', 'curiosity', 'boredom', 'confidence', 'trust', 'mischief', 'sleepiness', 'playfulness', 'stress'];
-
-  let weatherCache = { key: null, value: '' };
-  function habitatWeather(s) {
-    const key = !s.awake ? 'asleep' : `${s.mood}:${s.needs.boredom > 70}:${s.needs.energy < 30}`;
-    if (weatherCache.key !== key) {
-      weatherCache = { key, value: !s.awake ? pick(['dreaming quietly']) : s.needs.boredom > 70 ? ['dangerously bored'] : s.needs.energy < 30 ? ['sleepy static'] : pick(['softly curious', 'mossy and alert', 'mildly suspicious', 'pleasantly weird']) };
-    }
-    return weatherCache.value;
-  }
-
-  function renderAll() {
-    snap = ENGINE ? OP.Core.snapshot() : null;
-    if (!snap) return;
-    $('#dayCount').textContent = String(snap.day).padStart(3, '0');
-    $('#petName').textContent = snap.name.toUpperCase();
-    $('#moodWord').textContent = snap.mood;
-    $('#livingLabel').textContent = snap.living ? 'living mode' : 'quiet mode';
-    $('.pulse-dot').style.opacity = snap.living ? '1' : '.28';
-    $('#trustScore').textContent = Math.round(snap.needs.trust);
-    $('#bondRing').style.setProperty('--bond', `${snap.needs.trust}%`);
-    $('#bondLabel').textContent = bondLabel(snap.needs.trust);
-    $('#relationshipThought').textContent = relationshipThought(snap.needs.trust);
-    $('#archetype').textContent = archetype(snap.dna);
-    $('#dnaTag').textContent = `DNA // ${dnaCode(snap.dna)}`;
-    $('#habitatWeather').textContent = habitatWeather(snap);
-    if (!recentThought) $('#mindText').textContent = defaultMindLine(snap);
-    $('#zoneReadout').textContent = zoneLabel(snap.zone);
-    $('#bodyReadout').textContent = connected ? 'real Evo' : 'simulation';
-    $('#hardwareLabel').textContent = connected ? 'evo body attached' : 'simulated body';
-    $('#hardwareDot').classList.toggle('connected', connected);
-    renderFooter();
-    renderMeters();
-    renderMemories();
-    renderTags();
-    renderDNA();
-    renderDreams();
-    renderConnection();
-    renderFloorPanel();
-  }
-
-  function defaultMindLine(s) {
-    if (!s.awake) return 'The desk is gone. There is only Keyboard Mountain now.';
-    if (s.needs.boredom > 70) return 'I require stimulation before I invent something worse.';
-    if (s.needs.hunger > 70) return 'The hunger has started filing paperwork.';
-    if (s.needs.sleepiness > 75) return 'I am awake in the technical sense only.';
-    return pick(['I am considering a small journey with unreasonable confidence.', 'The desk is quiet. I do not trust this.', 'Status: present, weird, operational.']);
-  }
-
-  function renderFooter() {
-    const mode = OP.Safety?.state?.().mode || 'desk';
-    const suffix = connected
-      ? (mode === 'floor' ? '// FLOOR ADVENTURE // supervised' : '// desk mode // motors locked')
-      : '// no hardware commands sent';
-    $('#footerStatus').textContent = (snap.awake ? 'awake ' : 'asleep ') + (connected ? 'hardware bridge connected ' : 'simulation ') + suffix;
-  }
-
-  function renderMeters() {
-    $('#meterList').innerHTML = NEED_KEYS.map(key => `
-      <div class="meter-row">
-        <label>${key}</label>
-        <div class="meter-track"><div class="meter-fill" style="width:${snap.needs[key]}%"></div></div>
-        <output>${Math.round(snap.needs[key])}</output>
-      </div>`).join('');
-  }
-
-  function renderMemories() {
-    const items = snap.memories.slice(-8).reverse();
-    $('#memoryFeed').innerHTML = items.length ? items.map((m, i) => `
-      <div class="memory-item kind-${escapeHTML(m.kind || 'moment')}">
-        <div class="memory-index">${String(snap.memories.length - i).padStart(2, '0')}</div>
-        <div><p>${escapeHTML(m.text)}</p><time>${escapeHTML(m.at)}</time></div>
-      </div>`).join('') : '<div class="memory-item"><div class="memory-index">--</div><div><p>No memories. This is either peaceful or alarming.</p></div></div>';
-  }
-
-  function renderTags() {
-    const tags = [snap.mood, zoneLabel(snap.zone), snap.needs.boredom > 65 ? 'restless' : 'occupied', snap.needs.mischief > 78 ? 'bad ideas' : 'mostly lawful'];
-    $('#mindTags').innerHTML = tags.map(t => `<span>${escapeHTML(t)}</span>`).join('');
-  }
-
-  function renderDNA() {
-    const explain = { curiosity: 'pull toward novelty', courage: 'approach unknown things', affection: 'seek friendly contact', independence: 'act without asking', mischief: 'prefer interesting mistakes', patience: 'wait before acting', obedience: 'follow direct requests', persistence: 'try again after failure', weirdness: 'choose delightfully odd options' };
-    $('#dnaGrid').innerHTML = Object.entries(snap.dna)
-      .filter(([k]) => Object.prototype.hasOwnProperty.call(explain, k))
-      .map(([k, v]) => {
-        const shown = clamp(Math.round(Number(v)));
-        return `<div class="dna-item"><div class="dna-item-head"><span>${escapeHTML(k)}</span><strong>${shown}</strong></div><div class="meter-track"><div class="meter-fill" style="width:${shown}%"></div></div><p>${explain[k]}</p></div>`;
-      }).join('');
-    const d = snap.dna;
-    $('#traitCombo').innerHTML = `<b>${escapeHTML(archetype(d).toUpperCase())}</b><br>High curiosity (${Math.round(d.curiosity)}) and mischief (${Math.round(d.mischief)}) steer choices. Courage (${Math.round(d.courage)}) decides whether unknown zones get visited. Weirdness (${Math.round(d.weirdness)}) keeps odd behavior in rotation.`;
-  }
-
-  function renderDreams() {
-    const dreams = snap.dreams.length ? snap.dreams : [{ title: 'No dreams yet', text: 'Put Ozi to bed, then come back here.', day: snap.day }];
-    const latest = dreams[dreams.length - 1];
-    $('#dreamFeature').innerHTML = `<h3>${escapeHTML(latest.title)}</h3><p>${escapeHTML(latest.text)}</p>`;
-    $('#dreamList').innerHTML = dreams.slice().reverse().map((d, i) =>
-      `<button class="dream-thumb" data-dream-index="${dreams.length - 1 - i}"><b>DAY ${String(d.day || 0).padStart(3, '0')} // ${escapeHTML(d.title)}</b><small>${escapeHTML(d.text.slice(0, 70))}${d.text.length > 70 ? '…' : ''}</small></button>`).join('');
-    $$('[data-dream-index]').forEach(btn => btn.addEventListener('click', () => {
-      const d = snap.dreams[Number(btn.dataset.dreamIndex)];
-      if (d) $('#dreamFeature').innerHTML = `<h3>${escapeHTML(d.title)}</h3><p>${escapeHTML(d.text)}</p>`;
-    }));
-  }
-
-  function renderConnection() {
-    $('#connectionOrb').classList.toggle('connected', connected);
-    $('#connectionTitle').textContent = connected ? 'Real Evo body attached' : 'No body attached';
-    $('#connectionDetail').textContent = connected ? 'The local bridge answered. Safe movement, LED, tone and surface-color tests are enabled.' : 'Start the bridge, paste its one-time key, then connect.';
-    if (snap.hardware.key && !$('#bridgeKey').value) $('#bridgeKey').value = snap.hardware.key;
-  }
-
-  /* ================= request cards ================= */
-  let requestHideTimer = null;
-  function showRequestCard(r) {
-    const card = $('#oziRequestCard');
-    card.innerHTML = '';
-    const b = document.createElement('b'); b.textContent = r.title || 'Ozi wants something';
-    const p = document.createElement('p'); p.textContent = r.text || '';
-    const row = document.createElement('div'); row.className = 'request-actions';
-    (r.options || [{ label: 'PLAY', value: 'accept' }, { label: 'LATER', value: 'later' }]).forEach(opt => {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'request-btn'; btn.dataset.value = opt.value; btn.textContent = opt.label;
-      btn.addEventListener('click', () => hideRequestCard() || OP.Core.resolveRequest(r.id, opt.value));
-      row.appendChild(btn);
-    });
-    card.append(b, p, row);
-    card.hidden = false; card.classList.add('show');
-    clearTimeout(requestHideTimer);
-    requestHideTimer = setTimeout(hideRequestCard, (r.timeoutSec || 30) * 1000 + 500);
-  }
-  function hideRequestCard() {
-    clearTimeout(requestHideTimer);
-    const card = $('#oziRequestCard');
-    card.classList.remove('show'); card.hidden = true; card.innerHTML = '';
-  }
-
-  /* ================= emergency stop ================= */
-  function kidStopReason(reason) {
-    const r = String(reason || '').toLowerCase();
-    if (!r || r === 'manual') return 'The big red button was pressed.';
-    if (r.includes('tab hidden')) return 'Ozi paused because the page was hidden.';
-    if (r.includes('timeout') || r.includes('bridge') || r.includes('discover') || r.includes('bluetooth') || r.includes('service')) return 'Ozi lost its robot body connection.';
-    if (r.includes('read_color') || r.includes('fail') || r.includes('error')) return 'The robot body had a problem, so Ozi stopped to stay safe.';
-    return 'Ozi stopped moving to stay safe.';
-  }
-
-  function onEstop(data) {
-    OP.Follow?.stop?.();
-    stopPreview();
-    try { OP.Games?.stopAll?.(); } catch {} // a dead session must not keep a mission alive (2026-08-22e)
-    $('#oziEStop').hidden = true;
-    $('#oziEstopBanner').hidden = false;
-    $('#oziEstopReason').textContent = data?.reason ? `— ${kidStopReason(data.reason)}` : '— Ozi stopped moving to stay safe.';
-    setConnectedUI(false);
-    toast('ALL STOPPED', 'Ozi stopped moving. Press START AGAIN when you are ready.');
-  }
-
-  /* ================= hardware lab (legacy flow + safety) ================= */
-  let connected = false;
-  function setConnectedUI(v) {
-    const next = v === true;
-    connected = next;
-    // Safety.setConnected emits `estate`, whose UI listener comes back here.
-    // Only notify the engine when the value actually changes; otherwise a
-    // reconnect can recurse through the bus until the browser swallows it.
-    if (ENGINE && OP.Safety.state().connected !== connected) OP.Safety.setConnected(connected);
-    if (snap) { renderAll(); } else { $('#connectionOrb')?.classList.toggle('connected', connected); }
-  }
-
-  // Reattaching a real Evo must not silently resume autonomous motion from a
-  // stale Living Mode preference. The user can explicitly turn it back on.
-  function keepRealBodyQuiet() {
-    if (!ENGINE) return;
-    const state = OP.Core.getState?.();
-    if (!state || !state.living) return;
-    state.living = false;
-    OP.Store.saveSoon();
-    renderAll();
-    toast('Quiet mode on', 'Real body attached. Ozi will wait for your explicit controls.');
-  }
-
-  async function hardwareRequest(path, body = null, timeoutMs = 6000) {
-    const key = ($('#bridgeKey').value || '').trim();
-    const headers = { 'Content-Type': 'application/json', 'X-OzoPet-Key': key };
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), timeoutMs);
+  async function perform(steps, signal) {
+    if (signal.aborted) throw N.abortError();
+    const ctl = new AbortController(), abort = () => ctl.abort();
+    signal.addEventListener('abort', abort, { once: true });
     try {
-      const res = await fetch(`http://127.0.0.1:8787${path}`, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal, mode: 'cors' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `bridge returned ${res.status}`);
-      return data;
-    } finally { clearTimeout(timeout); }
+      // Neither animation nor game progress can claim a failed physical command.
+      const [, result] = await Promise.all([scene.play(steps, ctl.signal, sound), bridge.perform(steps, ctl.signal)]);
+      return result;
+    } catch (error) { ctl.abort(); scene.tween = null; if (bridge.connected && error.name !== 'AbortError') bridge.stop().catch(() => {}); throw error; }
+    finally { signal.removeEventListener('abort', abort); }
   }
-
-  /* ---- single-driver guard (2026-08-22 council motion C8):
-   * two tabs both driving one robot caused double-connects and interleaved
-   * commands. The tab that owns leadership (smallest live id) drives; the
-   * other becomes a spectator and is told why. */
-  const TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const driveChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ozo-pet-drive') : null;
-  const driveBeats = new Map();
-  let spectatorWarned = false;
-  function amSpectator() {
-    const now = Date.now();
-    for (const [id, ts] of driveBeats) if (now - ts > 4000) driveBeats.delete(id);
-    if (!driveChannel || driveBeats.size === 0) return false;
-    let leader = TAB_ID;
-    for (const id of driveBeats.keys()) if (id < leader) leader = id;
-    return leader !== TAB_ID;
-  }
-  function updateDriveGuard() {
-    const spectating = amSpectator();
-    let banner = document.getElementById('driveGuard');
-    if (spectating && !banner) {
-      banner = document.createElement('p');
-      banner.id = 'driveGuard';
-      banner.style.cssText = 'margin-top:10px;padding:10px 12px;border:2px solid #e2543f;background:#fff4ef;font:600 13px/1.45 ui-monospace,monospace;color:#7c2d12;border-radius:6px';
-      banner.textContent = 'OZI IS ALREADY PLAYING IN ANOTHER WINDOW. Close that tab to take over here.';
-      document.getElementById('connectionDetail')?.after(banner);
+  const activities = N.createActivities({
+    perform, sleep: (ms, signal) => clock.sleep(ms, signal), now: () => clock.now(),
+    update: renderGame, isHardware: () => bridge.connected && !bridge.simulator,
+    readColor: signal => bridge.readColor(signal),
+    onComplete: result => {
+      prefs.plays++; award('first');
+      prefs.scores[result.kind] = Math.max(Number(prefs.scores[result.kind]) || 0, result.score);
+      if (result.won) { if (['freeze', 'copycat'].includes(result.kind)) award(result.kind); else award('explorer'); scene.celebrate(); sound.win(); }
+      save(); renderBadges(); refreshBusy();
     }
-    if (!spectating && banner) banner.remove();
-    if (spectating && !spectatorWarned) {
-      spectatorWarned = true;
-      toast('Two windows detected', 'Ozi is being driven in another tab. Close it to take over.');
-    }
-    if (!spectating) spectatorWarned = false;
-  }
-  if (driveChannel) {
-    driveChannel.onmessage = (e) => {
-      const m = e.data || {};
-      if (m.id === TAB_ID) return;
-      if (m.type === 'hb') driveBeats.set(m.id, Date.now());
-      if (m.type === 'bye') driveBeats.delete(m.id);
-      updateDriveGuard();
-    };
-    setInterval(() => {
-      driveBeats.set(TAB_ID, Date.now());
-      driveChannel.postMessage({ type: 'hb', id: TAB_ID });
-      updateDriveGuard();
-    }, 1200);
-    addEventListener('pagehide', () => { try { driveChannel.postMessage({ type: 'bye', id: TAB_ID }); } catch {} });
-  }
-
-  let connectingBridge = false;
-  let syncingBridge = false;
-
-  function showBridgeLostState() {
-    if (!connected) return;
-    try { OP.Follow?.stop?.(); } catch {}
-    try { OP.Games?.stopAll?.(); } catch {}
-    setConnectedUI(false);
-    $('#oziEStop').hidden = true;
-    $('#oziEstopBanner').hidden = false;
-    $('#oziEstopReason').textContent = '— Ozi lost its robot body connection.';
-    toast('ALL STOPPED', 'Ozi lost the robot body. Press START AGAIN to reconnect.');
-  }
-
-  // Read-only reconciliation for the common stale-tab case: the local
-  // bridge is already attached to Evo, but this browser tab still says
-  // SIMULATION after a reload, sleep, or an interrupted request. Never start
-  // a BLE connect here, and never send a motor command from this watch.
-  async function syncBridgeState() {
-    if (syncingBridge || connectingBridge || document.visibilityState === 'hidden') return;
-    if (amSpectator()) return;
-    const key = ($('#bridgeKey').value || '').trim();
-    if (!key) return;
-    syncingBridge = true;
-    try {
-      const health = await hardwareRequest('/health', null, 5000);
-      if (health?.connected && !connected && !OP.Safety.state().estopped) {
-        setConnectedUI(true);
-        keepRealBodyQuiet();
-        $('#oziEstopBanner').hidden = true;
-        $('#oziEStop').hidden = false;
-        $('#surfaceReadout').textContent = health.surface || 'waiting';
-        toast('Evo body found', 'The bridge was already connected, so Ozi is ready.');
-      } else if (!health?.connected && connected) {
-        showBridgeLostState();
-      }
-    } catch {
-      // A health miss is transient while the local bridge or browser permission
-      // prompt wakes up. The next visible check or explicit CONNECT gives the
-      // child a clear, recoverable path.
-    } finally { syncingBridge = false; }
-  }
-
-  async function connectBridge() {
-    if (connectingBridge) return;
-    if (amSpectator()) return toast('Another window is driving', 'Close the other OziPet tab first — one robot, one driver.');
-    const key = $('#bridgeKey').value.trim();
-    if (!key) return toast('Bridge key missing', 'Run bridge/ozopet_bridge.py and paste the key it prints.');
-    connectingBridge = true;
-    const btn = $('#connectBridge');
-    const oldLabel = btn?.textContent || 'CONNECT TO LOCAL BRIDGE';
-    if (btn) { btn.disabled = true; btn.textContent = 'CONNECTING…'; }
-    // CONNECT is an explicit user action, so it is also the clear way out of
-    // the ALL STOPPED latch. Passive health reconciliation never clears it.
-    OP.Safety.reset();
-    try {
-      const health = await hardwareRequest('/health');
-      if (!health.ok) throw new Error('bridge health check failed');
-      // If another request/tab already attached Evo, adopt that live bridge
-      // session instead of asking the BLE stack to handshake a second time.
-      // Real BLE connects can take ~20s and occasionally longer; the bridge
-      // now auto-retries with settle time (council C10), so give it room.
-      const result = health.connected
-        ? health
-        : await (toast('Reaching the Evo…', 'Bluetooth handshakes can take up to a minute. Keep the robot close and the official Ozobot Editor closed.'), hardwareRequest('/connect', {}, 120000));
-      if (!result?.connected) throw new Error('The Evo did not answer the bridge.');
-      setConnectedUI(true);
-      keepRealBodyQuiet();
-      $('#oziEstopBanner').hidden = true;
-      try { OP.Games?.stopAll?.(); } catch {} // fresh session never inherits a stale mission (2026-08-22e)
-      $('#surfaceReadout').textContent = result.surface || 'waiting';
-      toast('Evo body attached', result.robot || 'Ozobot bridge connected.');
-      if (connected) {
-        await hardwareAction('led', { color: 'mint' }).catch(() => {});
-        await hardwareAction('tone', { frequency: 660, duration: .08 }).catch(() => {});
-        $('#oziEStop').hidden = false;
-      }
-    } catch (err) {
-      setConnectedUI(false);
-      toast('Bridge did not connect', humanError(err));
-    } finally {
-      connectingBridge = false;
-      if (btn) { btn.disabled = false; btn.textContent = oldLabel; }
-    }
-  }
-
-  async function disconnectBridge() {
-    try { if (connected) await hardwareRequest('/disconnect', {}, 12000); } catch {}
-    try { OP.Games?.stopAll?.(); } catch {} // disconnect cancels any running mission (2026-08-22e)
-    setConnectedUI(false);
-    $('#oziEStop').hidden = true;
-    toast('Hardware detached', 'Ozi is back in simulation-only mode.');
-  }
-
-  // Keep a stale/reloaded tab in step with the bridge without ever initiating
-  // BLE work or motion on its own. The explicit CONNECT button remains the
-  // only path that starts a new radio handshake.
-  setInterval(syncBridgeState, 7000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') setTimeout(syncBridgeState, 120);
   });
-
-  async function hardwareAction(action, payload = {}) {
-    if (!connected) throw new Error('hardware not connected');
-    return hardwareRequest('/action', { action, ...payload }, 20000);
+  function renderGame(data) {
+    currentGame = data;
+    $('introPanel').hidden = !!data.kind; $('activityPanel').hidden = !data.kind;
+    $('activityEyebrow').textContent = data.kind ? ({ freeze: 'MOVE. WAIT. FREEZE.', copycat: 'A LITTLE MEMORY MAGIC', color: 'PUT YOUR DETECTIVE HAT ON', trail: 'YOU’RE THE NAVIGATOR' }[data.kind]) : 'LET’S PLAY';
+    $('activityTitle').textContent = data.title;
+    $('activityInstruction').textContent = data.instruction;
+    $('gameScore').textContent = data.score;
+    $('gameBest').textContent = prefs.scores[data.kind] ? 'Best: ' + prefs.scores[data.kind] : 'Your first high score is waiting.';
+    $('roundTrack').replaceChildren(...Array.from({ length: data.total }, (_, i) => el('span', '', i < data.round ? 'done' : '')));
+    $('roundTrack').setAttribute('aria-label', 'Round ' + data.round + ' of ' + data.total);
+    const focus = document.activeElement?.dataset?.input;
+    const controls = [];
+    if (data.input === 'freeze') { const b = button(data.phase === 'freeze' ? 'FREEZE!' : 'Wait for FREEZE…', 'freeze-button' + (data.phase === 'freeze' ? ' ready' : ''), () => activities.input('freeze')); b.dataset.input = 'freeze'; controls.push(b); }
+    else if (data.input === 'colors') {
+      const icons = ['●', '◆', '▲', '■'];
+      data.choices.forEach((choice, i) => { const b = button('', 'color-pad', () => activities.input(choice.id)); b.style.background = choice.color; b.dataset.input = choice.id; b.setAttribute('aria-label', choice.label + ' (' + (i + 1) + ')'); b.append(el('span', icons[i]), el('small', choice.label)); controls.push(b); });
+    } else if (data.input === 'readColor') { controls.push(button('Read this color ↗', 'button coral', () => activities.input('read'))); }
+    else if (data.input === 'drive') {
+      const group = el('div', undefined, 'drive-control');
+      [['left', '↶', 'Left'], ['forward', '↑', 'Forward'], ['right', '↷', 'Right']].forEach(([id, icon, title]) => { const b = button(icon, '', () => activities.input(id)); b.dataset.input = id; b.setAttribute('aria-label', title); b.append(el('small', title)); group.append(b); }); controls.push(group);
+    } else if (['complete', 'stopped', 'error'].includes(data.phase)) {
+      controls.push(button('Play again ↗', 'button coral', () => startGame(data.kind)), button('Pick another game', 'text-button', exitGame));
+    } else controls.push(el('span', 'Watch Ozi… your turn is coming.', 'game-status'));
+    $('gameControls').replaceChildren(...controls);
+    if (focus) [...$('gameControls').querySelectorAll('[data-input]')].find(b => b.dataset.input === focus)?.focus({ preventScroll: true });
+    scene.setGame(data);
+    $('robotStage').classList.toggle('game-active', !!data.kind);
+    $('robotStage').classList.toggle('trail-active', data.kind === 'trail');
+    $('robotStage').classList.toggle('is-flashing', !!data.flash);
+    $('robotStage').style.setProperty('--flash-color', data.flash || 'transparent');
+    $('speechBubble').textContent = data.phase === 'complete' ? (data.result?.won ? 'That’s my play pal!' : 'We’ll get it next time.') : data.phase === 'freeze' ? 'FREEZE! Quick, tap!' : data.kind === 'trail' ? 'You lead. I follow.' : data.kind === 'copycat' ? (data.input ? 'Your turn, superstar.' : 'Eyes on my lights.') : data.kind === 'color' ? data.title : 'Time to wiggle!';
+    $('sceneCaption').textContent = data.kind === 'trail' ? 'A game map, not a map of your room.' : data.kind === 'freeze' ? 'Your tap is timed, not your body movement.' : 'Little steps. Big fun.';
+    $('playground').setAttribute('aria-label', data.board ? `Treasure map: Ozi at column ${data.board.x + 1}, row ${data.board.y + 1}; facing ${['north', 'east', 'south', 'west'][data.board.heading]}. Star at column ${data.board.goal.x + 1}, row ${data.board.goal.y + 1}.` : data.title + '. ' + data.instruction);
+    refreshBusy();
   }
-
-  function hardwareSoftFail(err) {
-    if (!connected) return;
-    setConnectedUI(false);
-    $('#oziEStop').hidden = true;
-    toast('Hardware went quiet', humanError(err));
+  async function startGame(kind) {
+    if (busy() || bridge.stopPending || bridge.status === 'connecting') { toast('Finish or stop this activity first.'); return; }
+    if (bridge.status === 'offline') { showConnection(); return; }
+    sound.unlock(); scene.reset(); setView('play', false);
+    const game = activities.start(kind); refreshBusy();
+    document.querySelector('.playroom').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await game; refreshBusy();
   }
-
-  function humanError(err) {
-    if (err?.name === 'AbortError') return 'The local bridge did not answer in time.';
-    if (/fetch/i.test(err?.message || '')) return 'Could not reach http://127.0.0.1:8787. Start the local bridge on this computer first.';
-    return err?.message || 'Unknown bridge error.';
+  function stopAll(reason = 'Stopped. Ready when you are.', sendStop = true) {
+    runNumber++; solo?.controller.abort(); solo = null; activities.stop(); sound.stop(); scene.reset();
+    if (sendStop) bridge.stop().catch(() => toast('Stop could not be confirmed. Turn off the Evo if it is still moving.'));
+    if (currentGame?.kind) { const stopped = { ...activities.snapshot(), phase: 'stopped', title: 'Let’s take a breather.', instruction: reason, input: null, board: null, flash: null }; renderGame(stopped); }
+    $('floorConsent').checked = false; refreshBusy();
   }
-
-  /* ================= floor adventure panel ================= */
-  let previewStream = null;
-  let followTarget = null;
-  try {
-    const savedTarget = JSON.parse(localStorage.getItem('ozi-follow-target'));
-    if (savedTarget && Number.isFinite(savedTarget.h)) followTarget = savedTarget;
-  } catch {}
-
-  function floorState() { return ENGINE ? OP.Safety.state() : { connected: false, mode: 'desk', floorConfirmed: false }; }
-
-  function renderFloorPanel() {
-    const st = floorState();
-    $('#oziModeDesk').classList.toggle('active', st.mode !== 'floor');
-    $('#oziModeFloor').classList.toggle('active', st.mode === 'floor');
-    $('#oziFloorConfirm').checked = st.floorConfirmed;
-    const armed = st.floorConfirmed && !!OP.Follow?.available?.();
-    $$('.follow-btn').forEach(b => b.disabled = !armed);
-    $('#oziFollowStatus').textContent = followStatusText(st);
+  function exitGame() { if (busy()) stopAll(); currentGame = null; scene.reset(); $('activityPanel').hidden = true; $('introPanel').hidden = false; $('robotStage').classList.remove('game-active', 'trail-active', 'is-flashing'); $('speechBubble').textContent = 'What shall we do next?'; $('sceneCaption').textContent = 'A little hello goes a long way.'; refreshBusy(); }
+  function setView(next, cancel = true) {
+    if (cancel && (busy() || currentGame)) exitGame();
+    view = next;
+    for (const id of ['play', 'create', 'badges']) $(id + 'View').hidden = id !== next;
+    document.querySelectorAll('[data-view]').forEach(b => { b.classList.toggle('selected', b.dataset.view === next); if (b.dataset.view === next) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   }
-
-  function kidFollowDetail(d) {
-    const r = String(d || '').toLowerCase();
-    if (!r) return '';
-    if (r.includes('low-signal') || r.includes('calibrat')) return ' Try a brighter color.';
-    if (r.includes('floor')) return ' Switch to FLOOR first.';
-    if (r.includes('camera') || r.includes('video')) return ' Turn the camera on.';
-    return '';
-  }
-
-  function followStatusText(st) {
-    if (!OP.Follow?.available?.()) return "This browser has no camera, so Ozi can't chase your card.";
-    if (st.mode !== 'floor' || !st.floorConfirmed) return 'Tap FLOOR and tick the box so Ozi is allowed to drive.';
-    if (followTarget) return 'I can see your card! Pick a button below. STOP always works.';
-    return 'Turn on the camera, hold up a colored paper, then tap it in the picture.';
-  }
-
-  async function startPreview() {
-    if (!navigator.mediaDevices?.getUserMedia) return toast('No camera API', 'This browser cannot provide a camera preview.');
+  async function runSolo(title, steps, quip, isRecipe = false) {
+    if (busy() || bridge.stopPending || bridge.status === 'connecting') return;
+    if (bridge.status === 'offline') { showConnection(); return; }
+    sound.unlock(); exitGame(); const id = ++runNumber, controller = new AbortController(); solo = { id, controller, title }; refreshBusy();
+    $('speechBubble').textContent = quip || 'Your moves. My tiny wheels.'; $('sceneCaption').textContent = title + (bridge.connected && !bridge.floor ? ' · Lights only on the real Evo.' : ' · Let’s do this.');
     try {
-      stopPreview();
-      previewStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 320 } }, audio: false });
-      const video = $('#oziCamVideo');
-      video.srcObject = previewStream;
-      await video.play().catch(() => {});
-      $('#oziFollowStatus').textContent = 'Camera is on! Hold up your colored paper and tap it in the picture.';
-    } catch (err) {
-      toast('Camera refused', err?.name === 'NotAllowedError' ? 'Permission denied. Allow camera access to use Follow modes.' : 'No usable camera found.');
-    }
+      await perform(steps, controller.signal);
+      if (id !== runNumber || controller.signal.aborted) return;
+      if (isRecipe) { award('maker'); save(); $('builderNote').textContent = 'Masterpiece performed! Mix it up and make another.'; }
+      scene.celebrate(); sound.win(); $('speechBubble').textContent = 'Again? I could do this all day.';
+    } catch (error) { if (error.name !== 'AbortError') { toast(error.message); $('builderNote').textContent = error.message; } }
+    finally { if (solo?.id === id) solo = null; refreshBusy(); }
   }
-
-  function stopPreview() {
-    if (previewStream) { previewStream.getTracks().forEach(t => t.stop()); previewStream = null; }
-    const video = $('#oziCamVideo');
-    if (video) video.srcObject = null;
+  function recipeSteps(recipe = prefs.recipe) { return recipe.flatMap(id => N.MOVES[id]?.steps || []); }
+  function recipeDuration(recipe = prefs.recipe) { return recipeSteps(recipe).reduce((sum, step) => sum + N.stepTime(step), 0); }
+  function renderRecipe() {
+    $('recipeDuration').textContent = recipeDuration().toFixed(1) + ' / 7 seconds';
+    $('recipeList').replaceChildren(...prefs.recipe.map((id, index) => { const item = el('li'); item.append(el('span', String(index + 1)), el('b', N.MOVES[id].icon + ' ' + N.MOVES[id].title)); const remove = button('×', '', () => { if (busy()) return; prefs.recipe.splice(index, 1); save(); renderRecipe(); }); remove.setAttribute('aria-label', 'Remove move ' + (index + 1) + ': ' + N.MOVES[id].title); item.append(remove); return item; }));
+    $('emptyRecipe').hidden = prefs.recipe.length > 0; $('undoMove').disabled = $('clearRecipe').disabled = !prefs.recipe.length; refreshBusy();
   }
-
-  function bindCalibrate(el) {
-    el.addEventListener('click', ev => {
-      const video = $('#oziCamVideo'), canvas = $('#oziCamCanvas');
-      if (!video || video.readyState < 2) return toast('No picture yet', 'Click PREVIEW CAMERA and allow access first.');
-      const rect = el.getBoundingClientRect();
-      const scaleX = (el.videoWidth || canvas.width) / rect.width;
-      const scaleY = (el.videoHeight || canvas.height) / rect.height;
-      const x = (ev.clientX - rect.left) * scaleX;
-      const y = (ev.clientY - rect.top) * scaleY;
-      Promise.resolve(OP.Follow.calibrate({ video, canvas, x, y })).then(res => {
-        if (res && Number.isFinite(res.h)) {
-          followTarget = { h: res.h, s: res.s ?? .8, v: res.v ?? .5 };
-          try { localStorage.setItem('ozi-follow-target', JSON.stringify(followTarget)); } catch {}
-          $('#oziFollowStatus').textContent = 'I can see your card! Pick a button below.';
-          toast('Color locked in!', 'Ozi knows which color to chase.');
-        } else {
-          $('#oziFollowStatus').textContent = "Hmm, that spot is too dark. Hold up brighter paper and tap it again.";
-        }
-        renderFloorPanel();
-      });
-    });
+  function addMove(id) {
+    if (busy()) { toast('Stop the current activity before changing your routine.'); return; }
+    const next = [...prefs.recipe, id];
+    if (next.length > 8 || recipeSteps(next).length > 16 || recipeDuration(next) > 7) { $('builderNote').textContent = 'That’s a full little routine! Remove a move to make room.'; return; }
+    prefs.recipe = next; $('builderNote').textContent = N.MOVES[id].title + ' added. What comes next?'; save(); renderRecipe();
   }
-
-  async function startFollowMode(modeName) {
-    const st = floorState();
-    if (!st.connected) return toast('No real body', 'Connect the bridge before Floor Adventure.');
-    if (!OP.Follow.available()) return toast('No camera', 'Follow modes need webcam access.');
-    if (!st.floorConfirmed) return toast('Floor not confirmed', 'Switch to FLOOR and tick the clear-floor confirmation first.');
-    stopPreview();
-    const ok = await OP.Follow.start(modeName, { video: $('#oziCamVideo'), canvas: $('#oziCamCanvas'), targetColor: followTarget });
-    if (ok !== false) {
-      $('#oziFollowStatus').textContent = `${modeName.toUpperCase()} ACTIVE // huge red STOP button is always live.`;
-      try { const s = OP.Core.getState(); s.counters.follows++; if (s.counters.follows === 1) OP.Core.unlockDiscovery('FIRST_FOLLOW'); OP.Store.saveSoon(); } catch {}
-    }
+  function renderBadges() {
+    $('badgeCount').textContent = BADGES.filter(b => prefs.badges.includes(b.id)).length;
+    $('gamesPlayed').textContent = prefs.plays ? prefs.plays + (prefs.plays === 1 ? ' game played. A great beginning.' : ' games played. Look at you go!') : 'Your first adventure is waiting.';
+    $('badgeShelf').replaceChildren(...BADGES.map(b => { const earned = prefs.badges.includes(b.id), card = el('article', undefined, 'badge' + (earned ? ' earned' : '')); const icon = el('div', b.icon, 'badge-icon'); icon.setAttribute('aria-hidden', 'true'); card.append(icon, el('h3', b.title), el('p', b.description), el('small', earned ? 'YOU EARNED IT' : 'WAITING FOR YOU')); return card; }));
   }
-
-  /* ================= dance deck / songbook / arcade ================= */
-  const HEARD_KEY = 'ozi-heard-songs';
-  function heardSongs() {
-    let arr = [];
-    try { arr = JSON.parse(localStorage.getItem(HEARD_KEY)); } catch {}
-    if (!Array.isArray(arr)) arr = [];
-    const out = arr.filter(x => typeof x === 'string').slice(0, 40);
-    for (const d of ['humming', 'greeting']) if (!out.includes(d)) out.push(d);
-    return out;
+  function showConnection() { if (busy()) { toast('Stop the current activity before changing robot setup.'); return; } $('connectionDialog').showModal(); renderConnection(); }
+  function renderConnection() {
+    const s = bridge.state();
+    $('connectionLabel').textContent = s.status === 'connecting' ? 'Connecting…' : s.connected ? (s.simulator ? 'Sim bridge' : prefs.name + ' is here') : s.status === 'offline' ? 'Reconnect Ozi' : 'Connect Ozi';
+    $('connectButton').classList.toggle('connected', s.connected);
+    $('stageMode').textContent = s.connected ? (s.simulator ? 'BRIDGE SIMULATION' : s.floor ? 'REAL EVO · FLOOR PLAY' : 'REAL EVO · LIGHTS ONLY') : s.status === 'offline' ? 'ROBOT LINK LOST' : s.status === 'connecting' ? 'CONNECTING…' : 'SCREEN PLAY';
+    $('floorButton').textContent = s.floor ? 'Floor play enabled ✓' : 'Set up floor play ↗';
+    $('floorButton').classList.toggle('armed', s.floor);
+    $('playModeNote').textContent = s.connected ? (s.simulator ? 'Simulator bridge only. No physical robot is connected.' : s.floor ? 'Ozi’s wheels are ready. Pick a game or trick to start moving.' : 'Ozi’s lights are ready. Set up floor play to unlock scoots and spins.') : s.status === 'offline' ? 'The robot link is unavailable. Reconnect or choose screen play.' : 'Screen play is ready. Connect your Evo to play together.';
+    $('footerMode').textContent = s.connected ? (s.simulator ? 'Bridge simulation · No physical robot' : s.floor ? 'Supervised floor play · STOP locks the wheels' : 'Lights-only play · Wheels locked') : s.status === 'offline' ? 'Robot disconnected · No automatic reconnect' : 'Screen play · No robot connected';
+    $('pairButton').disabled = s.status === 'connecting' || s.connected; $('pairButton').textContent = s.status === 'connecting' ? 'Finding Ozi…' : 'Connect my Evo ↗';
+    $('disconnectButton').hidden = !s.connected && s.status !== 'connecting';
+    $('connectionMessage').textContent = s.message || 'Screen play works right away, even without a robot.';
+    $('connectionMessage').className = 'setup-status' + (s.status === 'offline' ? ' error' : s.connected ? ' success' : '');
+    $('bridgeVersion').textContent = s.protocol ? 'Connected bridge protocol: ' + s.protocol + '. Floor play requires version 4.' : 'This playroom needs bridge version 4 for floor play.';
+    if (!s.floor) $('floorConsent').checked = false;
+    refreshBusy();
   }
-  function markHeard(id) {
-    if (!id) return;
-    const list = heardSongs();
-    if (!list.includes(id)) { list.push(id); try { localStorage.setItem(HEARD_KEY, JSON.stringify(list.slice(-40))); } catch {} }
-  }
-
-  function renderDanceDeck() {
-    const host = $('#danceDeck');
-    if (!host) return;
-    const unlocked = !!snap?.flags?.secretDanceUnlocked;
-    const dances = (OP.Perform.listDances() || []).filter(d => !d.secret || unlocked);
-    host.innerHTML = dances.map(d => `
-      <div class="cassette-row" data-dance="${escapeHTML(d.id)}">
-        <div class="row-glyph">♪</div>
-        <div><span class="row-title">${escapeHTML(d.title)}${d.secret ? ' <small>SECRET</small>' : ''}</span><p class="row-desc">${escapeHTML(d.desc || '')}</p></div>
-        <button class="row-play" data-play-dance="${escapeHTML(d.id)}">PLAY</button>
-      </div>`).join('');
-    $$('[data-play-dance]').forEach(btn => btn.addEventListener('click', () => {
-      OP.Core.dance(btn.dataset.playDance);
-      $$('.cassette-row').forEach(r => r.classList.toggle('now-playing', r.dataset.dance === btn.dataset.playDance));
-    }));
-  }
-
-  function renderSongbook() {
-    const host = $('#songList');
-    if (!host) return;
-    const heard = heardSongs();
-    host.innerHTML = (OP.Perform.listSongs() || []).map(s => {
-      const isHeard = heard.includes(s.id);
-      return `<div class="song-row ${isHeard ? 'heard' : 'locked'}" data-song="${escapeHTML(s.id)}">
-        <div class="row-glyph">♫</div>
-        <div><span class="row-title">${isHeard ? escapeHTML(s.title) : '??? — unheard'}</span><p class="row-desc">${isHeard ? escapeHTML(s.mood || 'original melody') : 'Hear it from Ozi first.'}</p></div>
-        ${isHeard ? `<button class="row-play" data-play-song="${escapeHTML(s.id)}">PLAY</button>` : '<span></span>'}
-      </div>`;
-    }).join('');
-    $$('[data-play-song]').forEach(btn => btn.addEventListener('click', () => {
-      OP.Perform.song(btn.dataset.playSong);
-      markHeard(btn.dataset.playSong);
-      $$('.song-row').forEach(r => r.classList.toggle('playing', r.dataset.song === btn.dataset.playSong));
-    }));
-  }
-
-  function renderArcade() {
-    const grid = $('#missionGrid');
-    if (!grid) return;
-    grid.innerHTML = (OP.Games.listMissions() || []).map(m => `
-      <div class="mission-card">
-        ${m.needsFloor ? '<span class="floor-stamp">BEST ON FLOOR</span>' : ''}
-        <div class="mission-head"><span class="mission-glyph">${escapeHTML(m.glyph || '◆')}</span><b>${escapeHTML(m.title)}</b></div>
-        <p>${escapeHTML(m.desc || '')}</p>
-        <button class="mission-start" data-mission="${escapeHTML(m.id)}">START</button>
-      </div>`).join('');
-    $$('[data-mission]').forEach(btn => btn.addEventListener('click', () => launchMission(btn.dataset.mission)));
-  }
-
-  function stage(html) { const s = $('#gameStage'); if (s) s.innerHTML = html; }
-  const stageLine = (text, cls = '') => `<p class="stage-line ${cls}">${escapeHTML(text)}</p>`;
-
-  // Mission abort bar (2026-08-22e): every phase render appends it while a
-  // mission is live, so "abort" always has a visible button.
-  function abortBar() {
-    if (!OP.Games.busy()) return '';
-    return `<div class="stage-abort"><button type="button" data-abort-mission>ABORT MISSION</button></div>`;
-  }
-  function renderStageWithAbort(html) {
-    stage(html + abortBar());
-  }
-
-  function simonGlyph(entry) {
-    const colorHex = getColor(entry.color);
-    return `<span class="simon-glyph" style="--swatch:${colorHex}">${entry.direction === 'left' ? '◀' : entry.direction === 'right' ? '▶' : '●'}</span>`;
-  }
-
-  let padBound = false;
-  function showInputPad(round) {
-    if (!padBound) {
-      $$('.pad-btn').forEach(b => b.addEventListener('click', () => {
-        OP.Games.input('simon', b.dataset.pad);
-      }));
-      padBound = true;
-    }
-    stage(`<p class="stage-line big">YOUR TURN — round ${round}</p><div class="input-pad">
-      <button class="pad-btn" data-pad="mint" style="--swatch:#74ffc8">M</button>
-      <button class="pad-btn" data-pad="violet" style="--swatch:#b780ff">V</button>
-      <button class="pad-btn" data-pad="amber" style="--swatch:#ffd36c">A</button>
-      <button class="pad-btn" data-pad="blue" style="--swatch:#7ddcff">B</button>
-      <button class="pad-btn" data-pad="left">◀</button>
-      <button class="pad-btn" data-pad="right">▶</button>
-    </div>`);
-  }
-
-  function renderGamePhase(p) {
-    if (!p || typeof p !== 'object') return;
-    const S = renderStageWithAbort;
-    switch (p.phase) {
-      case 'start': S(stageLine(`MISSION STARTED // ${p.game}`, 'big')); break;
-      case 'watch': S(stageLine(`WATCH THE PATTERN — round ${p.round}/${p.totalRounds || 3}`, 'big') + `<div class="simon-seq">${(p.seq || []).map(simonGlyph).join('')}</div>`); break;
-      case 'input': showInputPad(p.round); break;
-      case 'result': S(stageLine(p.won ? `FLAWLESS — round ${p.round} cleared.` : `Pattern collapsed at round ${p.round}. Ozi is being gracious about it. Probably.`, p.won ? 'win' : 'bad')); break;
-      case 'state': S(`<div class="lamp ${p.light}"></div>` + stageLine(p.light === 'green' ? 'GREEN — Ozi wiggles.' : 'RED — freeze!', 'big')); break;
-      case 'end': S(stageLine(p.caught ? `Caught mid-wiggle ${p.caughtTimes || ''}time(s). Confidence shaken, comedy intact.` : `Clean rounds won: ${p.wins}. Suspicious discipline.`)); break;
-      case 'party': S(stageLine(`NOW PLAYING: ${p.track}`, 'violet')); break;
-      case 'seek': S(stageLine(`FIND: ${p.label} — place Evo on the ${p.color} card`, 'big') + (p.retry ? stageLine('not it. suspicious. try again.') : '')); break;
-      case 'found': S(stageLine(p.msg || (p.matched ? `FOUND IT — surface reads ${p.surface}.` : `Surface reads ${p.surface}. Not the one.`))); break;
-      case 'summary': S(stageLine(`Hunt complete: ${p.matched}/${p.total} colors confirmed.`)); break;
-      case 'box': S(stageLine(`MYSTERY BOX: ${p.surface} → ${p.outcome}`, 'violet')); break;
-      case 'patrol': S(stageLine(`GUARDING — ${p.sec}s left on shift.`)); break;
-      case 'alert': S(stageLine(`PROXIMITY ALERT — something at ${p.side}. Guarding works.`, 'bad')); break;
-      case 'countdown': S(stageLine(p.n > 0 ? `HIDING IN… ${p.n}` : 'READY OR NOT…', 'big')); break;
-      case 'found2': case 'found-seek': break;
-      case 'stopped': S(stageLine('Mission aborted. No further questions.')); break;
-      case 'error': S(stageLine(`Mission error: ${p.detail || 'unknown'}`, 'bad')); break;
-      case 'msg': S(stageLine(p.msg || '')); break;
-      default:
-        if (p.msg) S(stageLine(p.msg));
-    }
-    // The Simon input pad replaces the whole stage; re-append the abort bar
-    // there too so an abort button is visible in EVERY live phase.
-    if (p.phase === 'input') {
-      const s = $('#gameStage');
-      if (s && OP.Games.busy()) s.insertAdjacentHTML('beforeend', abortBar());
-    }
-  }
-
-  function abortMission() {
-    try { OP.Safety?.halt?.(); } catch {}
-    OP.Games.stopAll();
-    toast('Mission aborted', 'Ozi is free. Pick anything else to play.');
-  }
-
-  async function launchMission(id) {
-    try { OP.Games?.clearStaleRun?.(); } catch {}
-    if (OP.Games.busy()) return toast('Already playing', 'One mission at a time — press ABORT MISSION on the stage below first.');
-    try {
-      const result = await OP.Games.start(id);
-      if (result && result.ok === false && !result.aborted) renderStageWithAbort(stageLine(`Mission declined by the engine: ${result.error || 'unknown'}`, 'bad'));
-      renderAll();
-    } catch (err) {
-      renderStageWithAbort(stageLine(String(err?.message || err), 'bad'));
-    }
-  }
-
-  /* ================= modals ================= */
-  let lastFocused = null;
-  function openModal(id) {
-    lastFocused = document.activeElement;
-    $('#modalLayer').classList.add('open');
-    $('#modalLayer').setAttribute('aria-hidden', 'false');
-    $$('.modal').forEach(m => m.classList.toggle('active', m.id === id));
-    document.body.style.overflow = 'hidden';
-    const modal = document.getElementById(id);
-    if (id === 'danceModal') renderDanceDeck();
-    if (id === 'arcadeModal') renderArcade();
-    if (id === 'songbookModal') renderSongbook();
-    (modal?.querySelector('.modal-close') || modal)?.focus();
-  }
-  function closeModal() {
-    if (!$('#modalLayer').classList.contains('open')) return;
-    $('#modalLayer').classList.remove('open');
-    $('#modalLayer').setAttribute('aria-hidden', 'true');
-    $$('.modal').forEach(m => m.classList.remove('active'));
-    document.body.style.overflow = '';
-    if (lastFocused && document.contains(lastFocused) && typeof lastFocused.focus === 'function') lastFocused.focus();
-    lastFocused = null;
-  }
-
-  /* ================= event bindings ================= */
-  function bindEvents() {
-    const unlockAudio = () => {
-      try { OP.Perform?.unlockAudio?.(); } catch {}
-    };
-    window.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
-    window.addEventListener('keydown', unlockAudio, { once: true, capture: true });
-
-    $$('[data-action]').forEach(btn => btn.addEventListener('click', () => {
-      if (!ENGINE) return toast('Engine offline', 'Refresh the page — the pet brain failed to load.');
-      OP.Core.interact(btn.dataset.action);
-    }));
-
-    const oziEl = $('#ozi');
-    if (oziEl) oziEl.addEventListener('pointerdown', () => {
-      if (ENGINE) OP.Core.interact('pet');
-    });
-
-    $$('[data-zone]').forEach(btn => btn.addEventListener('click', () => {
-      if (snap && !snap.awake) return toast('Ozi is asleep', 'Say hello first if you want to wake the little menace.');
-      const z = btn.dataset.zone;
-      selectZoneButton(z);
-      moveVisuals(z); setLed((zones[z] || zones.center).color); animate('bop', 500);
-      if (ENGINE) {
-        OP.Core.applyNeeds({ curiosity: -2, boredom: -5 });
-        OP.Core.addMemory(`Was directed toward ${zoneLabel(z)}.`);
-      }
-      showThought(`You pointed at ${zoneLabel(z)}. I am choosing to interpret this as permission.`);
-      if (ENGINE) OP.Store.saveSoon();
-    }));
-
-    $$('[data-modal]').forEach(btn => btn.addEventListener('click', () => openModal(btn.dataset.modal)));
-    $$('[data-close-modal]').forEach(el => el.addEventListener('click', closeModal));
-    $('#hardwareButton').addEventListener('click', () => openModal('hardwareModal'));
-
-    $('#livingToggle').addEventListener('click', () => {
-      if (!ENGINE) return;
-      const s = OP.Core.getState();
-      s.living = !s.living;
-      OP.Store.saveSoon();
-      renderAll();
-      toast(s.living ? 'Living mode on' : 'Quiet mode on', s.living ? 'Ozi may initiate small interactions.' : 'Ozi will wait for you.');
-    });
-
-    $('#resetDayButton').addEventListener('click', () => {
-      if (!ENGINE) return;
-      const s = OP.Core.getState();
-      s.day++;
-      s.awake = true;
-      OP.Core.applyNeeds({ energy: 12, boredom: -10 });
-      OP.Core.addMemory(`Day ${s.day} began. Ozi resumed the investigation.`);
-      renderAll();
-      Bus.emit('thought', { text: 'New day. Same desk. New allegations.' });
-    });
-
-    // runtime-guard.js provides the two-click CONFIRM arm/disarm in capture
-    // phase — by the time this fires, the user has confirmed.
-    $('#clearMemories').addEventListener('click', () => {
-      if (!ENGINE) return;
-      const s = OP.Core.getState();
-      s.memories.length = 0;
-      OP.Store.saveSoon();
-      renderAll();
-      toast('Memory feed cleared', 'Dreams and personality were left intact.');
-    });
-
-    $('#connectBridge').addEventListener('click', connectBridge);
-    $('#disconnectBridge').addEventListener('click', disconnectBridge);
-
-    $$('[data-hw]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!connected) return toast('No real body yet', 'Open Hardware Lab and connect the local bridge first.');
-      const commands = {
-        forward: ['move', { distance: 50, speed: 50 }], back: ['move', { distance: -40, speed: 45 }],
-        left: ['turn', { angle: 35, speed: 70 }], right: ['turn', { angle: -35, speed: 70 }], tone: ['tone', { frequency: 740, duration: .08 }]
-      };
-      const cmd = commands[btn.dataset.hw];
-      if (!cmd) return;
-      try { await hardwareAction(cmd[0], cmd[1]); toast('Body command sent', btn.dataset.hw); animate('bop', 500); }
-      catch (e) { hardwareSoftFail(e); }
-    }));
-
-    $$('[data-led]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!connected) return toast('No real body yet', 'Connect the bridge before testing LEDs.');
-      try {
-        // LED + a matching beep through Safety so every swatch gives audible
-        // AND visible feedback on the robot (2026-08-22e kid feedback).
-        await OP.Safety.execSteps([{ led: btn.dataset.led }, { tone: { frequency: 740, duration: 0.09 } }], { source: 'gesture', label: 'swatch' });
-        setLed(getColor(btn.dataset.led));
-      }
-      catch (e) { hardwareSoftFail(e); }
-    }));
-
-    // Mission abort (delegated — the bar is re-rendered with every phase).
-    $('#gameStage')?.addEventListener('click', ev => {
-      if (ev.target.closest('[data-abort-mission]')) abortMission();
-    });
-
-    $('#readColorButton').addEventListener('click', async () => {
-      if (!ENGINE) return;
-      if (!connected) return toast('No real body yet', 'Connect the bridge first.');
-      const r = await OP.Safety.readSurface();
-      $('#surfaceReadout').textContent = r.surface || 'unclassified';
-      if (r.error) hardwareSoftFail(new Error(r.error));
-      else toast('Surface read', r.surface || 'unclassified');
-    });
-
-    $('#generateDream').addEventListener('click', () => {
-      if (!ENGINE) return;
-      const d = OP.Core.generateDreamFromMemories();
-      if (d) { renderAll(); toast('Dream archived', d.title); }
-      else toast('Nothing to dream about yet', 'Ozi needs a few memories first. Go make some.');
-    });
-
-    // floor adventure
-    $('#oziModeDesk').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.setMode('desk'); renderFloorPanel(); renderFooter(); });
-    $('#oziModeFloor').addEventListener('click', () => {
-      if (!ENGINE) return;
-      OP.Safety.setMode('floor');
-      if ($('#oziFloorConfirm').checked) OP.Safety.confirmFloor();
-      renderFloorPanel(); renderFooter();
-    });
-    $('#oziFloorConfirm').addEventListener('change', ev => {
-      if (!ENGINE) return;
-      if (ev.target.checked) OP.Safety.confirmFloor(); else OP.Safety.revokeFloor();
-      renderFloorPanel();
-    });
-    $('#oziCamPreview').addEventListener('click', startPreview);
-    bindCalibrate($('#oziCamVideo'));
-    bindCalibrate($('#oziCamCanvas'));
-    $('#oziFollowStart').addEventListener('click', () => startFollowMode('follow'));
-    $('#oziComeHere').addEventListener('click', () => startFollowMode('come'));
-    $('#oziHandMode').addEventListener('click', () => startFollowMode('hand'));
-
-    $('#oziEStop').addEventListener('click', () => { if (!ENGINE) return; OP.Safety.estop('manual STOP pressed'); });
-    $('#oziEstopReset').addEventListener('click', async () => {
-      const btn = $('#oziEstopReset');
-      if (btn.dataset.busy) return;
-      btn.dataset.busy = '1';
-      btn.disabled = true;
-      try {
-        OP.Safety.reset();
-        $('#oziEstopBanner').hidden = true;
-        const hasKey = !!$('#bridgeKey').value.trim();
-        if (hasKey && !connected) {
-          toast('Waking Ozi up…', 'Starting the body again.');
-          for (let i = 0; i < 2 && !connected && !OP.Safety.state().estopped; i++) {
-            await connectBridge();
-            if (!connected) await new Promise(r => setTimeout(r, 3500));
-          }
-          if (!connected) {
-            $('#oziEstopBanner').hidden = false;
-            toast('Ozi is still sleepy', 'Wait a moment and press START AGAIN.');
-          }
-        } else {
-          toast('Ozi is ready!', 'Press any button to play.');
-        }
-      } finally {
-        delete btn.dataset.busy;
-        btn.disabled = false;
-      }
-    });
-
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { closeModal(); return; }
-      if (e.key !== 'Tab' || !$('#modalLayer').classList.contains('open')) return;
-      const focusables = $$('.modal.active button, .modal.active input').filter(el => el.offsetParent !== null && !el.disabled);
-      if (!focusables.length) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    });
-
-    window.addEventListener('beforeunload', () => { ENGINE && OP.Store.saveNow(); stopPreview(); });
-    window.addEventListener('pagehide', () => { ENGINE && OP.Store.saveNow(); stopPreview(); });
-  }
-
-  /* ================= bus wiring ================= */
-  function wireBus() {
-    Bus.on('thought', d => d?.text && showThought(d.text));
-    Bus.on('mood', () => renderAll());
-    Bus.on('anim', d => d?.name && animate(d.name, d.ms || 900));
-    Bus.on('led', d => d?.color && setLed(d.color));
-    Bus.on('zone', d => d?.zone && moveVisuals(d.zone));
-    Bus.on('memory', () => renderAll());
-    Bus.on('discovery', d => d && toast(`DISCOVERY — ${d.label}`, d.text || ''));
-    Bus.on('request', r => r && showRequestCard(r));
-    Bus.on('request-done', hideRequestCard);
-    Bus.on('toast', t => t && toast(t.title || '', t.text || ''));
-    Bus.on('song', d => { markHeard(d?.name); if ($('#songList')?.children.length) renderSongbook(); });
-    Bus.on('dance', () => renderAll());
-    Bus.on('game', p => renderGamePhase(p));
-    Bus.on('estate', d => {
-      setConnectedUI(d?.connected);
-      $('#oziEStop').hidden = !d?.connected;
-      if (d?.connected) $('#connectionOrb')?.classList.add('connected');
-      renderFooter();
-    });
-    Bus.on('mode', () => { renderFloorPanel(); renderFooter(); });
-    Bus.on('estop', onEstop);
-    Bus.on('follow', d => {
-      const st = d?.state;
-      const detail = d?.detail ? ` ${kidFollowDetail(d.detail)}` : '';
-      if (st === 'tracking') $('#oziFollowStatus').textContent = `Ozi is chasing your color card!${detail}`;
-      else if (st === 'lost') $('#oziFollowStatus').textContent = `Ozi lost the card — hold it up to the camera again.${detail}`;
-      else if (st === 'starting') $('#oziFollowStatus').textContent = 'Turning the camera on…';
-      else if (st === 'stopped') { $('#oziFollowStatus').textContent = `Stopped.${detail}`; renderFloorPanel(); }
-      else if (st === 'error') { $('#oziFollowStatus').textContent = `Oops — Ozi needs your help.${detail}`; renderFloorPanel(); }
-    });
-    Bus.on('tick-needs', () => renderAll());
-    Bus.on('state-changed', () => renderAll());
-    Bus.on('dream', () => renderAll());
-  }
-
-  /* ================= dust + boot ================= */
-  function createDust() {
-    const root = $('#dust');
-    for (let i = 0; i < 34; i++) {
-      const dot = document.createElement('i');
-      dot.style.left = `${Math.random() * 100}%`; dot.style.top = `${Math.random() * 100}%`;
-      dot.style.setProperty('--d', `${6 + Math.random() * 10}s`); dot.style.animationDelay = `${-Math.random() * 10}s`;
-      root.appendChild(dot);
-    }
-  }
-
-  function boot() {
-    createDust();
-    bindEvents();
-    if (!ENGINE) {
-      toast('Engine failed to load', 'The pet modules did not start. Check the console and refresh.');
-      return;
-    }
-    OP.Core.init();
-    OP.Core.wireDeps({ Perform: OP.Perform, Games: OP.Games });
-    OP.Safety.setKeyProvider(() => ($('#bridgeKey').value || '').trim());
-    OP.Core.startLoops();
-    wireBus();
-    snap = OP.Core.snapshot();
-    moveVisuals(snap.zone || 'nest');
-    selectZoneButton(snap.zone || 'nest');
-    renderAll();
-    renderDanceDeck();
-    renderSongbook();
-    renderArcade();
-    setTimeout(() => {
-      animate('bop');
-      if (!snap.awake) showThought('...zzzt... keyboard mountain...');
-      else showThought('You came back. Good. I had concerns. Also: I can dance now. Just saying.');
-    }, 700);
-  }
-
-  /* ================= fresh-brain check =================
-     A tab left open across a deploy keeps running the OLD brain, which can
-     disagree with the bridge about the motion contract (2026-08-22 incident).
-     Poll version.json; on mismatch show a persistent kid-friendly banner.
-     Tap-to-reload only — never auto-reload while motors may be running. */
-  function freshBrainCheck() {
-    const META = document.querySelector('meta[name="ozi-build"]');
-    const BUILD = META ? META.content : 'dev';
-    if (BUILD === 'dev') return;
-    let announced = false;
-    setInterval(async () => {
-      if (announced || document.hidden) return;
-      try {
-        const res = await fetch('version.json?nocache=' + Date.now(), { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.build && data.build !== BUILD) {
-          announced = true;
-          const el = document.createElement('div');
-          el.className = 'toast';
-          el.style.cursor = 'pointer';
-          el.innerHTML = '<b>OZI LEARNED NEW TRICKS</b><p>Tap here to update his brain.</p>';
-          el.addEventListener('click', () => location.reload(), { once: true });
-          $('#toastStack').appendChild(el);
-        }
-      } catch {}
-    }, 45000);
-  }
-
-  boot();
-  freshBrainCheck();
+  bridge.addEventListener('state', renderConnection);
+  bridge.addEventListener('lost', () => { stopAll(bridge.message, false); toast(bridge.message); });
+  document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+  document.querySelectorAll('.start-game').forEach(b => b.addEventListener('click', () => startGame(b.dataset.game)));
+  document.querySelectorAll('[data-trick]').forEach(b => b.addEventListener('click', () => { const t = N.TRICKS[b.dataset.trick]; runSolo(t.title, t.steps, t.quip); }));
+  document.querySelector('.brand').addEventListener('click', event => { event.preventDefault(); setView('play'); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('helloButton').addEventListener('click', () => runSolo('A little hello', [{ led: '#7ce0bd', wait: .35 }, { led: '#ffb0cd', wait: .3 }, { led: '#7ce0bd', wait: .3 }], 'Hi! I’m ' + prefs.name + '. Your turn to smile.'));
+  $('exitActivity').addEventListener('click', exitGame);
+  $('stopButton').addEventListener('click', () => stopAll('Stopped. Pick another game when you’re ready.'));
+  $('connectButton').addEventListener('click', showConnection); $('floorButton').addEventListener('click', showConnection);
+  $('floorConsent').addEventListener('change', refreshBusy);
+  $('connectForm').addEventListener('submit', async event => { event.preventDefault(); if (busy()) return; try { await bridge.connect($('bridgeKey').value); } catch (e) { toast(e.message); } });
+  $('disconnectButton').addEventListener('click', async () => { stopAll('Robot disconnected.', false); await bridge.disconnect(); renderConnection(); });
+  $('armFloor').addEventListener('click', async () => {
+    if (!$('floorConsent').checked || busy()) return;
+    $('armFloor').disabled = true;
+    try { await bridge.setFloor(true); $('connectionDialog').close(); toast('Wheels ready! Choose a game or trick to start.'); } catch (e) { toast(e.message); } finally { refreshBusy(); }
+  });
+  $('deskMode').addEventListener('click', async () => { try { await bridge.setFloor(false); $('connectionDialog').close(); toast('Lights only. Wheels are locked.'); } catch (e) { toast(e.message); } });
+  $('screenPlay').addEventListener('click', async () => { stopAll('Switching to screen play.', false); $('screenPlay').disabled = true; await bridge.disconnect(true); $('screenPlay').disabled = false; $('connectionDialog').close(); exitGame(); });
+  $('settingsButton').addEventListener('click', () => { if (busy()) stopAll('Paused for grown-up settings.'); $('petName').value = prefs.name; $('settingsDialog').showModal(); });
+  $('openConnectionFromSettings').addEventListener('click', () => { $('settingsDialog').close(); showConnection(); });
+  $('nameForm').addEventListener('submit', event => { event.preventDefault(); prefs.name = $('petName').value.trim().slice(0, 24) || 'Ozi'; save(); $('settingsDialog').close(); renderConnection(); $('speechBubble').textContent = 'Hi! I’m ' + prefs.name + '.'; });
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).close()));
+  function renderSound() { $('soundButton').setAttribute('aria-pressed', String(sound.enabled)); $('soundButton').setAttribute('aria-label', 'Turn sound ' + (sound.enabled ? 'off' : 'on')); }
+  $('soundButton').addEventListener('click', async () => { sound.enabled = !sound.enabled; prefs.sound = sound.enabled; save(); renderSound(); if (sound.enabled) { await sound.unlock(); sound.note(); } else sound.stop(); });
+  $('movePalette').replaceChildren(...Object.entries(N.MOVES).map(([id, move]) => { const b = button('', '', () => addMove(id)); b.dataset.move = id; b.append(el('span', move.icon), el('small', move.title)); return b; }));
+  $('undoMove').addEventListener('click', () => { if (busy()) return; prefs.recipe.pop(); save(); renderRecipe(); });
+  $('clearRecipe').addEventListener('click', () => { if (busy()) return; prefs.recipe = []; save(); renderRecipe(); });
+  $('runRecipe').addEventListener('click', () => runSolo('Your masterpiece', recipeSteps(), 'Your moves. My tiny wheels.', true));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { if (busy() || bridge.floor) stopAll('Stopped with Escape.'); return; }
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || document.querySelector('dialog[open]')) return;
+    let answer = null;
+    if (currentGame?.input === 'freeze' && event.code === 'Space' && event.target.tagName !== 'BUTTON') answer = 'freeze';
+    if (currentGame?.input === 'colors' && /^[1-4]$/.test(event.key)) answer = currentGame.choices[Number(event.key) - 1]?.id;
+    if (currentGame?.input === 'drive') answer = ({ ArrowUp: 'forward', ArrowLeft: 'left', ArrowRight: 'right' })[event.key];
+    if (answer) { event.preventDefault(); activities.input(answer); }
+    if (event.key.toLowerCase() === 'f') { event.preventDefault(); if (document.fullscreenElement) document.exitFullscreen?.(); else $('main').requestFullscreen?.().catch(() => {}); }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && (busy() || bridge.floor)) stopAll('Paused because this tab was hidden. Start again when you’re ready.'); lastFrame = performance.now(); });
+  window.addEventListener('pagehide', () => {
+    if (bridge.key && bridge.connected) fetch('http://127.0.0.1:8787/stop', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OzoPet-Key': bridge.key }, body: '{}', keepalive: true }).catch(() => {});
+  });
+  function frame(at) { if (!advancing) clock.tick(Math.min(100, Math.max(0, at - lastFrame))); lastFrame = at; scene.render(); requestAnimationFrame(frame); }
+  window.render_game_to_text = () => JSON.stringify({ view, busy: busy(), game: currentGame, robot: bridge.state(), recipe: prefs.recipe, recipeSeconds: recipeDuration(), scores: prefs.scores, badges: prefs.badges, scene: { ...scene.currentPose(), color: scene.color, coordinateSystem: 'Canvas origin top-left. x increases right; y increases down. Trail cells are a plan, not real robot location.' } });
+  window.advanceTime = async ms => {
+    // Deterministic screen tests must never accelerate commands to a real robot.
+    if (bridge.connected) throw new Error('Deterministic time is available only in screen play.');
+    advancing = true;
+    try { for (let elapsed = 0; elapsed < Math.min(ms, 120000); elapsed += 20) { clock.tick(Math.min(20, ms - elapsed)); for (let i = 0; i < 8; i++) await Promise.resolve(); } scene.render(); }
+    finally { advancing = false; lastFrame = performance.now(); }
+  };
+  // Reject an invalid saved routine instead of relying on server truncation.
+  while (prefs.recipe.length && (recipeDuration() > 7 || recipeSteps().length > 16)) prefs.recipe.pop();
+  renderBadges(); renderRecipe(); renderSound(); renderConnection(); scene.render(); requestAnimationFrame(frame);
+  setInterval(() => bridge.poll(), 8000);
 })();

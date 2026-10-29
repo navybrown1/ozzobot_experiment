@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+const root = path.resolve(import.meta.dirname, '..');
+const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+assert.equal(new Set(ids).size, ids.length, 'HTML IDs must be unique');
+const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
+assert.deepEqual(scripts, ['./playroom/scene.js', './playroom/robot.js', './playroom/activities.js', './app.js']);
+for (const file of scripts) execFileSync(process.execPath, ['--check', path.join(root, file)]);
+const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+for (const match of app.matchAll(/\$\('([^']+)'\)/g)) assert(ids.includes(match[1]), `Missing HTML element: ${match[1]}`);
+for (const match of html.matchAll(/(?:src|href)="(\.\/[^"#]+)"/g)) assert(fs.existsSync(path.join(root, match[1])), `Missing asset: ${match[1]}`);
+JSON.parse(fs.readFileSync(path.join(root, 'vercel.json')));
+assert(app.includes('render_game_to_text') && app.includes('advanceTime'));
+assert(!html.includes('runtime-guard.js'), 'Legacy fetch interceptor must not load');
+console.log('Static checks passed: syntax, DOM bindings, local assets, configuration.');

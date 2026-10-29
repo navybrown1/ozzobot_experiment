@@ -1,173 +1,232 @@
-# OzoPet Bridge — Sequence API (OzoPetBridge/0.3)
+# OzoPet Bridge API — protocol 4 (OzoPetBridge/0.4)
 
-Additions to the local hardware bridge (`ozopet_bridge.py`). All pre-existing
-endpoints (`/health`, `/connect`, `/disconnect`, `/action`), auth, CORS and
-clamping behavior are unchanged. Base URL is always `http://127.0.0.1:8787`
-in production; the examples below use a test port.
+The local bridge retains `/health`, `/connect`, `/disconnect`, `/action`,
+`/sequence`, `/stop`, and `/proximity`, their existing fields, auth, CORS, and
+numeric clamps. Protocol 4 adds `/play-mode` and two status fields.
+**Motor commands require explicit floor arming**, including in simulator mode.
+Existing clients must adopt this contract before sending motion.
 
-## Auth
+Production remains `http://127.0.0.1:8787`. Tests use temporary loopback ports,
+never the installed bridge. Examples below use test port `8789`.
 
-Every endpoint requires the bridge key header:
+## Authentication and errors
 
-```
-X-OzoPet-Key: <key printed at bridge startup>
-```
+Every API endpoint requires `X-OzoPet-Key: <bridge key>`. Missing/wrong key:
+`401 {"ok":false,"error":"invalid bridge key"}`. OPTIONS remains unauthenticated.
 
-Missing/wrong key → `401 {"ok": false, "error": "invalid bridge key"}`.
-The server is multi-threaded (ThreadingHTTPServer), so `POST /stop` can be
-served while a `POST /sequence` is still running. A second `POST /sequence`
-while one is active is refused with HTTP 400; it is never queued behind the
-active routine. Background `GET /proximity` calls return the last sample while
-a routine owns the hardware worker, so sensor polling cannot interrupt a
-dance.
+- `400`: invalid input, disconnected robot, unarmed motion, duplicate routine,
+  cancelled action, or operation timeout.
+- `404`: unknown endpoint.
+- `500`: unexpected SDK/hardware failure, including mid-command BLE errors.
+- Error bodies remain `{"ok":false,"error":"..."}`.
+- Bodies must be JSON objects, at most 8192 bytes. NaN/Infinity, booleans used
+  as numbers, and other non-finite/non-numeric parameters are rejected.
 
-## Step shapes
+`/proximity` degrades to `available:false` on failures. A valid authenticated
+STOP returns `200 {"ok":true,"action":"stop"}`. This acknowledges the request,
+not confirmed physical stopping; malformed bodies/bad keys retain their errors.
 
-A sequence is a list of step objects. Each step sets **one or more** of these
-keys; execution order within a step is fixed: `led` → `tone` → `move` →
-`turn` → `wait`.
+## Status and connection lifecycle
 
-```jsonc
+`GET /health`, `POST /connect`, `POST /disconnect`, and `POST /play-mode`
+return status with additive `protocol_version` and `play_mode` fields:
+
+```json
 {
-  "led":   "mint",                                   // palette name
-  "tone":  { "frequency": 880, "duration": 0.1 },    // Hz, seconds
-  "move":  { "distance": 40,  "speed": 50 },         // mm, mm/s
-  "turn":  { "angle": 45,     "speed": 90 },         // degrees, deg/s
-  "wait":  0.5                                       // seconds
+  "ok": true,
+  "protocol_version": 4,
+  "mode": "hardware",
+  "connected": true,
+  "play_mode": "desk",
+  "robot": "OzoEvo-*",
+  "sdk_available": true,
+  "sdk_error": null,
+  "surface": "unclassified"
 }
 ```
 
-## Clamp table (server-side, single source: `move`/`turn`/`led`/`tone` methods)
+`mode` remains `hardware` or `simulator`; `play_mode` is `desk` or `floor`,
+always initially `desk`.
 
-| Parameter        | Range            | Out-of-range behavior            |
-|------------------|------------------|----------------------------------|
-| `steps` count    | 0..16            | >16 → first 16 run; `truncated: true`, `steps_received` reports original count (2026-08-22: oversized sequences are no longer rejected — a stale client must never sever the radio link) |
-| `led` color name | PALETTE names (`mint`, `violet`, `amber`, `red`, `blue`, `off`) or `#rrggbb` hex | unknown name silently becomes `mint` |
-| `tone.frequency` | 180..1600        | clamped                          |
-| `tone.duration`  | 0.03..0.35 s     | clamped                          |
-| `move.distance`  | -120..120 mm     | clamped                          |
-| `move.speed`     | 20..80 (abs)     | clamped                          |
-| `turn.angle`     | -180..180 deg    | clamped                          |
-| `turn.speed`     | 30..120 (abs)    | clamped                          |
-| `wait`           | 0..1.5 s         | clamped                          |
-| wall-clock total | ≤ 8.0 s          | excess steps are not run; `truncated: true` |
+Hardware health checks the installed native SDK's underlying Bleak client at
+`evo._driver._control._channel._client.is_connected`. Bleak's CoreBluetooth
+property reads local peripheral state without scanning or GATT I/O. Health
+never queues hardware work, connects, probes LEDs, or sends motion.
+An unknown/unavailable driver shape fails closed as disconnected.
 
-Validation (→ `400 {"ok": false, "error": ...}`, nothing executes):
+A detected dead link marks the session disconnected, clears floor arming,
+cancels old work, and discards cached proximity. A client property becoming
+true again cannot resurrect the session. Explicit `/connect` and fresh floor
+confirmation are required. The explicit-connect handshake can retry, but
+**no failed action or sequence is automatically reconnected or replayed**.
+A command may already have reached the robot when its acknowledgement fails.
 
-- `steps` missing / not a list
-- a step that is not an object, or an **empty** object
-- any **unknown key** on a step (only `led`, `tone`, `move`, `turn`, `wait` allowed)
-- `move`/`turn`/`tone` values that are not objects
-- any non-numeric or **non-finite** parameter (`NaN`, `Infinity` are rejected
-  by the JSON parser itself and by `require_finite`)
+## POST /play-mode
 
-Numeric out-of-range values are **clamped, not rejected** (same policy as
-`/action`).
+After placing the robot on a safe floor, arm motion with:
+
+```json
+{"mode":"floor","floor_confirmed":true}
+```
+
+The robot must be connected. Confirmation must be the JSON boolean `true`,
+not `1` or a string. Missing confirmation or any other mode produces 400.
+Return to desk mode with `{"mode":"desk"}`, also allowed while disconnected.
+
+Desk mode cancels work and requests a best-effort halt. STOP, disconnect,
+observed link loss, and a routine deadline also clear floor arming. No mode
+change starts motion. In desk mode, `move`, `turn`, and `dance` are refused
+server-side, including motor primitives inside `/sequence`. A motor sequence
+is refused before its LED/tone steps execute. Zero distance/angle does not
+bypass arming. Connected `led`, `tone`, `hello`, and `read_color` remain usable.
+
+## POST /action
+
+Existing action shapes and effective-parameter response fields remain:
+
+```json
+{"action":"move","distance":40,"speed":50}
+{"action":"turn","angle":35,"speed":70}
+{"action":"led","color":"mint"}
+{"action":"tone","frequency":660,"duration":0.08}
+{"action":"hello"}
+{"action":"dance"}
+{"action":"read_color"}
+```
+
+Hardware tone remains acknowledged without sending PlayTone; the browser
+provides audio. Simulator tone waits for its clamped duration.
 
 ## POST /sequence
 
-```bash
-curl -s -X POST http://127.0.0.1:8787/sequence \
-  -H "X-OzoPet-Key: $OZOPET_BRIDGE_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"steps":[{"led":"violet"},{"tone":{"frequency":880,"duration":0.1}},{"wait":0.2},{"turn":{"angle":45,"speed":90}}]}'
+Send `{"steps":[...]}`. Each nonempty step object sets one or more keys in
+fixed execution order: `led` → `tone` → `move` → `turn` → `wait`.
+
+```json
+{
+  "steps": [
+    {"led":"violet"},
+    {"tone":{"frequency":880,"duration":0.1}},
+    {"move":{"distance":40,"speed":50},"turn":{"angle":45,"speed":90}},
+    {"wait":0.2}
+  ]
+}
 ```
 
-Response:
+All retained steps are validated before any execute. Unknown step/nested keys,
+invalid object/string shapes, and invalid numbers produce 400. Missing numeric
+fields use `/action` defaults. Empty lists are allowed. Only the first 16 steps
+are retained; discarded tail steps do not execute or undergo step validation.
+
+| Parameter | Range / behavior |
+|---|---|
+| Steps | First 16; larger lists set `truncated:true` |
+| LED | `mint`, `violet`, `amber`, `red`, `blue`, `off`, or `#rrggbb`; unknown names use mint |
+| Tone frequency | 180–1600 Hz |
+| Tone duration | 0.03–0.35 s |
+| Move distance | −120–120 mm |
+| Move speed | Absolute value clamped to 20–80 mm/s |
+| Turn angle | −180–180 degrees |
+| Turn speed | Absolute value clamped to 30–120 degrees/s |
+| Wait | 0–1.5 s |
+| Execution budget | 8.0 s, monotonic deadline from execution start |
+
+Out-of-range numbers are clamped. Motor limits have not been expanded. The
+deadline is checked before and after **each primitive**, including within a
+multi-key step. Waits and SDK operation timeouts are clipped to remaining time.
+At expiry, the bridge cancels the pending SDK operation, clears floor arming,
+and requests a halt. Thread/OS scheduling overhead can extend response time;
+queue time and asynchronous halt completion are outside the execution budget.
+No additional primitive starts after the deadline.
+
+Example partial response:
 
 ```json
 {
   "ok": true,
   "action": "sequence",
   "results": [
-    { "index": 0, "ok": true, "actions": [ { "ok": true, "action": "led", "color": "violet" } ] },
-    { "index": 1, "ok": true, "actions": [ { "ok": true, "action": "tone", "frequency": 880.0, "duration": 0.1 } ] },
-    { "index": 2, "ok": true, "actions": [ { "ok": true, "action": "wait", "seconds": 0.2 } ] },
-    { "index": 3, "ok": true, "actions": [ { "ok": true, "action": "turn", "angle": 45.0, "speed": 90.0 } ] }
+    {"index":0,"ok":true,"actions":[{"ok":true,"action":"led","color":"violet"}]}
   ],
-  "truncated": false,
-  "steps_executed": 4
+  "truncated": true,
+  "steps_executed": 1,
+  "steps_received": 4
 }
 ```
 
-- `results[i].actions` holds one entry per primitive executed for that step,
-  in execution order (a multi-key step yields multiple entries).
-- `steps_executed` = number of step objects actually executed.
-- A `wait` may be shortened near the 8 s budget; the effective seconds slept
-  is reported.
+- `steps_received` counts the original list, including discarded tail steps.
+- `results` retains completed primitives and any partial wait in execution
+  order. An interrupted motor primitive is not reported as completed.
+- `steps_executed` counts entries in `results`, including a partial step/wait;
+  it does not promise every primitive in that step completed.
+- `wait.seconds` reports effective time slept, clipped for budget or STOP.
+- `truncated` is true for excess steps, STOP/cancellation, or deadline,
+  **including a shortened final wait in the final step**.
+- BLE failure follows the error model; partial physical movement is possible,
+  and no command is replayed to compensate.
 
-On a real Evo, `tone` is acknowledged but intentionally not sent over BLE.
-The browser plays the melody locally; suppressing the SDK's fragile PlayTone
-command keeps cosmetic audio from interrupting movement or missions.
+## STOP and concurrency
 
-If the BLE link drops during a sequence, the bridge makes one short reconnect
-attempt and reports the routine as safely abandoned. It never replays a
-partially completed routine.
+The server is threaded. STOP immediately signals the current generation of
+work and clears floor arming. Waits wake immediately; pending BLE waits check
+cancellation at intervals up to 25 ms. Velocity zero is scheduled directly on
+the owned BLE loop, bypassing the routine queue, with a 0.5 s best-effort
+timeout. The HTTP response does not wait for that acknowledgement.
 
-## Abort semantics
+Cancellation is captured at admission. Work queued before STOP stays cancelled
+even if floor mode is rearmed before the worker reaches it. No request resets
+another request's cancellation. A stopped sequence returns partial results
+with `truncated:true`; a cancelled action returns 400. New motor requests need
+fresh floor confirmation.
 
-Two conditions stop a sequence early, both reported as `truncated: true`
-(already-executed steps keep their results):
+Only one sequence or built-in dance can be admitted, including one waiting
+for the worker. A duplicate returns 400. The guard is held until the worker
+actually finishes, even if its HTTP caller times out. The bridge retains one
+hardware worker on timeout rather than allowing a replacement to race an old
+motor dispatcher. It does not automatically restart the service.
 
-1. **Wall-clock cap**: 8.0 s monotonic budget. Checked before every step; a
-   `wait` is additionally clipped to the remaining budget, so total wall time
-   never exceeds ~8 s.
-2. **`POST /stop`**: sets an internal abort flag and is checked **between
-   every step**. In-flight primitives finish; the next step never starts.
-
-The abort flag resets to `false` at the start of every `POST /sequence` and
-every `POST /action`, so a stopped sequence can simply be re-run.
-
-```bash
-curl -s -X POST http://127.0.0.1:8787/stop -H "X-OzoPet-Key: $OZOPET_BRIDGE_KEY"
-# → {"ok": true, "action": "stop"}
+```sh
+curl -s -X POST http://127.0.0.1:8789/stop \
+  -H "X-OzoPet-Key: $OZOPET_BRIDGE_KEY"
 ```
-
-`/stop` also best-effort calls `robot.set_velocity(0, 0, 0)` on hardware
-(failures swallowed); in simulator mode it is a no-op. `/stop` always
-answers `200`.
-
-## Link-loss auto-resurrect (2026-08-22)
-
-If a hardware op fails because the BLE link died mid-session (bleak
-"Not connected") while the bridge believed the robot was connected, the bridge
-silently rebuilds the connection once and retries the operation. Clients see
-the normal `200` result — the drop costs a few seconds of pause, not the
-session. If resurrection fails, the original error propagates (500) so the
-app can surface a real failure. Connect/disconnect/halt/proximity ops are
-exempt.
-
-## Owned event loop (2026-08-22, motion C6)
-
-All SDK access runs on ONE permanent asyncio loop (`_BleLoop`) via
-`run_coroutine_threadsafe`, using the SDK's async `EvoHandle` — never the
-sync wrapper. Rationale: bleak requires a single always-running loop for the
-life of the client, and the sync wrapper's shared `asyncio.Runner` is not
-thread-safe (symptoms were "This event loop is already running", silent
-hangs, and recovery-exit spirals). Hung operations are CANCELLED at an inner
-ceiling (op timeout − 2s), so a stuck BLE call costs one failed op instead of
-poisoning the bridge. Test hooks (QA only): `OZI_FAKE_BLE=1` swaps in a fake
-async robot; `OZI_FAKE_HANG_AT_OP=k` / `OZI_FAKE_DROP_AT_OP=k` inject a hang
-(cancellation test) or a link-death (resurrect test) at op k.
 
 ## GET /proximity
 
-Same auth as `/health`. Hardware + connected only:
-
-```bash
-curl -s http://127.0.0.1:8787/proximity -H "X-OzoPet-Key: $OZOPET_BRIDGE_KEY"
-```
-
 ```json
-{ "ok": true, "available": true, "front": { "left": false, "right": true } }
+{"ok":true,"available":true,"front":{"left":false,"right":true}}
 ```
 
-`front.left` / `front.right` = obstacle detected. In simulator mode, when not
-connected, or if either sensor read fails, it degrades to
-`{"ok": true, "available": false}`. This endpoint never raises.
+The installed SDK returns `Sample` objects whose `.value` contains the sensor
+reading. `Sample(0, timestamp)` itself is truthy. The bridge converts
+**`.value`**: zero reports `false`, nonzero reports `true`. The fake SDK mirrors
+this Sample behavior.
 
-## Error model (unchanged)
+Simulator, disconnected state, or read failure returns
+`{"ok":true,"available":false}`. During an admitted routine, proximity returns
+the last sample instead of queuing a competing read. A passive link check
+precedes the cache, so a known dead link cannot return stale readings. These IR
+sensors provide obstacle indications, not reliable table-edge detection.
 
-`400` for validation/connection errors (`ValueError`/`RuntimeError`),
-`401` bad key, `404` unknown path, `500` unexpected failures. Bodies are
-`{"ok": false, "error": "..."}`. Bodies larger than 8192 bytes are rejected.
+## Verification and limits
+
+From the repository root, with the existing environment:
+
+```sh
+bridge/.venv/bin/python -B -m unittest discover -s bridge -p 'test_*.py' -v
+```
+
+The stdlib suite uses simulator mode and fake BLE, exercising the real HTTP
+handler on dynamically allocated loopback ports. It never calls the installed
+bridge on 8787 or opens a radio connection. An optional installed-SDK test
+checks actual Sample/Evo shape without Bluetooth; it skips if unavailable.
+No added dependencies are required.
+
+The existing hooks remain: `OZI_FAKE_BLE=1`, `OZI_FAKE_HANG_AT_OP=k`,
+`OZI_FAKE_DROP_AT_OP=k`, and `OZI_TEST_DROP_AT_OP=k`. They verify cancellation
+and link-loss handling without automatic recovery or replay.
+
+Tests do not validate physical stopping distance, firmware cancellation, or
+radio reliability. A delivered command can move the robot before STOP takes
+effect; a disconnected/unresponsive robot may not receive the halt. SDK
+cancellation and zero velocity are best effort. The private native SDK
+connection path must be reviewed on upgrades; unknown shapes fail closed.
