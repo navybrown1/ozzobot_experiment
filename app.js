@@ -16,7 +16,7 @@
   function save() { try { localStorage.setItem(STORE, JSON.stringify(prefs)); } catch { toast('This browser could not save progress. You can still play.'); } }
   const clock = new N.Clock(), scene = new N.Scene($('playground'), clock), sound = new N.Sound(), bridge = new N.Bridge();
   sound.enabled = prefs.sound;
-  let view = 'play', solo = null, runNumber = 0, toastTimer = null, lastFrame = performance.now(), advancing = false, currentGame = null;
+  let view = 'play', moveMode = 'drive', solo = null, runNumber = 0, toastTimer = null, lastFrame = performance.now(), advancing = false, currentGame = null;
   const BADGES = [
     { id: 'first', icon: '✦', title: 'Play pal', description: 'Finish your first game.' },
     { id: 'freeze', icon: '♪', title: 'Freeze master', description: 'Finish three freeze rounds.' },
@@ -32,9 +32,12 @@
   function refreshBusy() {
     const active = busy();
     $('stopDock').hidden = !active && !bridge.floor;
+    $('stopDock').classList.toggle('compact', !active);
     $('stopLabel').textContent = active ? (solo?.title || 'Game in progress') : 'Floor play is enabled';
     document.querySelectorAll('.start-game,[data-trick]').forEach(b => { b.disabled = active || bridge.status === 'connecting'; });
     $('helloButton').disabled = active || bridge.status === 'connecting';
+    $('movePalette').querySelectorAll('button').forEach(b => { b.disabled = active || bridge.status === 'connecting' || !!bridge.stopPending; });
+    $('driveMode').disabled = $('buildMode').disabled = active;
     $('runRecipe').disabled = active || !prefs.recipe.length || !!bridge.stopPending;
     $('armFloor').disabled = !bridge.connected || !$('floorConsent').checked || active || bridge.protocol < 4 || !!bridge.stopPending;
     $('deskMode').disabled = !bridge.connected || active;
@@ -192,7 +195,16 @@
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).close()));
   function renderSound() { $('soundButton').setAttribute('aria-pressed', String(sound.enabled)); $('soundButton').setAttribute('aria-label', 'Turn sound ' + (sound.enabled ? 'off' : 'on')); }
   $('soundButton').addEventListener('click', async () => { sound.enabled = !sound.enabled; prefs.sound = sound.enabled; save(); renderSound(); if (sound.enabled) { await sound.unlock(); sound.note(); } else sound.stop(); });
-  $('movePalette').replaceChildren(...Object.entries(N.MOVES).map(([id, move]) => { const b = button('', '', () => addMove(id)); b.dataset.move = id; b.append(el('span', move.icon), el('small', move.title)); return b; }));
+  function setMoveMode(mode) {
+    moveMode = mode;
+    $('driveMode').setAttribute('aria-pressed', String(mode === 'drive'));
+    $('buildMode').setAttribute('aria-pressed', String(mode === 'build'));
+    $('moveModeHelp').textContent = mode === 'drive' ? 'Tap a move and Ozi does it now.' : 'Tap moves to build a tiny masterpiece.';
+    $('moveHint').textContent = mode === 'drive' ? 'Tap a button to play that move. For real wheels, enable floor play.' : 'Up to 8 moves and 7 seconds. Tap Perform my moves when ready.';
+  }
+  $('driveMode').addEventListener('click', () => setMoveMode('drive'));
+  $('buildMode').addEventListener('click', () => setMoveMode('build'));
+  $('movePalette').replaceChildren(...Object.entries(N.MOVES).map(([id, move]) => { const b = button('', '', () => { if (moveMode === 'build') addMove(id); else if (bridge.connected && !bridge.floor && move.steps.some(step => step.move || step.turn)) toast('Wheels are locked. Enable floor play to move the real Evo.'); else runSolo(move.title, move.steps, 'Here comes ' + move.title.toLowerCase() + '!'); }); b.dataset.move = id; b.append(el('span', move.icon), el('small', move.title)); return b; }));
   $('undoMove').addEventListener('click', () => { if (busy()) return; prefs.recipe.pop(); save(); renderRecipe(); });
   $('clearRecipe').addEventListener('click', () => { if (busy()) return; prefs.recipe = []; save(); renderRecipe(); });
   $('runRecipe').addEventListener('click', () => runSolo('Your masterpiece', recipeSteps(), 'Your moves. My tiny wheels.', true));

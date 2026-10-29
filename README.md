@@ -8,7 +8,7 @@ A small, colorful playroom for ages 8–9, with four short games, expressive scr
 - **Copycat:** remember and repeat five growing color patterns. Wrong answers produce an honest retry, not a disconnected-robot message.
 - **Color Quest:** screen matching, or genuine surface-color reads when connected to a physical Evo. Use colored paper beneath its sensor; it does not recognize objects across the room.
 - **Treasure Trail:** steer around obstacles on a five-by-five game board. The board is a plan, not localization of the physical robot.
-- **Make a move:** compose forward/back, turns, wiggles, spins, colors and pauses. Up to eight blocks, sixteen commands and seven predicted seconds per routine.
+- **Make a move:** tap a button to play the move immediately, or choose **Build a routine** to compose forward/back, turns, wiggles, spins, colors and pauses. Up to eight blocks, sixteen commands and seven predicted seconds per routine.
 - **Quick tricks:** six-second choreography with 120 mm steps, wider turns and full spins. Audio is synthesized by the browser, not the robot speaker.
 
 The screen starts in **Screen Play**. That label does not claim a physical robot is connected. Scores, recipes and badges are stored on the current browser/device. Old v1/v2 pet data remains intact, but is not loaded into the new game system.

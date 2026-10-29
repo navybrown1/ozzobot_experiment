@@ -47,6 +47,7 @@ try {
   await until(s => s.game.phase === 'complete', 'trail complete'); assert((await state()).game.result.won);
   await page.screenshot({ path: 'output/playwright/game-complete.png', fullPage: true });
   await page.locator('[data-view="create"]').click();
+  await page.locator('#buildMode').click();
   for (let i = 0; i < 5; i++) await page.locator('[data-move="forward"]').click();
   assert.equal((await state()).recipe.length, 3); assert((await state()).recipeSeconds <= 7);
   await page.locator('#clearRecipe').click();
@@ -70,12 +71,28 @@ try {
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.connected);
   assert.equal((await state()).robot.floor, false);
   await page.locator('[data-close="connectionDialog"]').click();
+  await page.locator('[data-view="create"]').click();
+  await page.locator('[data-move="forward"]').click();
+  assert.match(await page.locator('#toast').innerText(), /Wheels are locked/);
+  assert.equal(requests.filter(r => r.p === '/sequence').length, 0, 'desk-mode tap must not send movement');
+  await page.locator('[data-view="play"]').click();
   await page.locator('[data-trick="spin"]').click(); await page.waitForFunction(() => !JSON.parse(window.render_game_to_text()).busy, undefined, { timeout: 15000 });
   const deskSequence = requests.find(r => r.p === '/sequence'); assert(deskSequence); assert(deskSequence.body.steps.every(step => !step.move && !step.turn));
   await page.locator('#floorButton').click(); await page.locator('#floorConsent').check(); await page.locator('#armFloor').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.floor); assert.equal((await state()).robot.floor, true);
+  assert(await page.locator('#stopDock').evaluate(el => el.classList.contains('compact')));
+  await page.locator('[data-view="create"]').click();
+  for (const [id, field, value] of [['forward','move',120], ['back','move',-120], ['left','turn',90], ['right','turn',-90], ['spin','turn',180], ['wiggle','turn',90], ['glow','led','#ff405e'], ['pause','wait',1]]) {
+    const before = requests.length;
+    await page.locator(`[data-move="${id}"]`).click();
+    await page.waitForFunction(() => !JSON.parse(window.render_game_to_text()).busy, undefined, { timeout: 15000 });
+    const sequence = requests.slice(before).find(r => r.p === '/sequence');
+    assert(sequence, `${id} sends a sequence`);
+    assert(sequence.body.steps.some(s => s[field] && (typeof s[field] === 'object' ? (s[field].distance ?? s[field].angle) : s[field]) === value), `${id} sends the expected action`);
+  }
+  await page.locator('[data-view="play"]').click();
   failSequence = true; await page.locator('[data-trick="wiggle"]').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.status === 'offline');
   assert.equal((await state()).robot.floor, false); assert.equal((await state()).busy, false);
-  const motorRequests = requests.filter(r => r.p === '/sequence' && r.body.steps.some(s => s.move || s.turn)); assert.equal(motorRequests.length, 1, 'failed motor request must not replay');
+  const motorRequests = requests.filter(r => r.p === '/sequence' && r.body.steps.some(s => s.move || s.turn)); assert.equal(motorRequests.length, 7, 'failed motor request must not replay');
   await page.locator('#connectButton').click(); await page.locator('#screenPlay').click(); await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).robot.status === 'screen');
   await page.setViewportSize({ width: 390, height: 844 }); await page.reload(); await page.waitForFunction(() => !!window.render_game_to_text);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
